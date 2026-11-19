@@ -500,6 +500,9 @@ def load_global_config() -> dict[str, Any]:
 # layer below) is type-agnostic, so a KB list overrides the global list wholesale.
 GLOBAL_SCALAR_KEYS: tuple[str, ...] = (
     "model",
+    "indexing_model",
+    "compilation_model",
+    "query_model",
     "language",
     "pageindex_threshold",
     "entity_types",

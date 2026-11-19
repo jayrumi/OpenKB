@@ -407,6 +407,10 @@ def _llm_call(
     **kwargs,
 ) -> str:
     """Single LLM call with animated progress and debug logging."""
+    if model.startswith("chatgpt/"):
+        from openkb.provider_compat import install_response_compat
+
+        install_response_compat()
     messages = _prepare_messages(model, messages)
     extra_headers = bundle.extra_headers if bundle is not None else get_extra_headers()
     if extra_headers:
@@ -450,6 +454,10 @@ async def _llm_call_async(
     **kwargs,
 ) -> str:
     """Async LLM call with timing output and debug logging."""
+    if model.startswith("chatgpt/"):
+        from openkb.provider_compat import install_response_compat
+
+        install_response_compat()
     messages = _prepare_messages(model, messages)
     extra_headers = bundle.extra_headers if bundle is not None else get_extra_headers()
     if extra_headers:

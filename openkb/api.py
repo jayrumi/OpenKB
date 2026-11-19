@@ -104,13 +104,13 @@ from openkb.cli import (
     run_remove_for_api,
 )
 from openkb.config import (
-    DEFAULT_CONFIG,
     resolve_credential_bundle,
     resolve_effective_config,
     resolve_init_kb_dir,
     validate_kb_name,
 )
 from openkb.log import append_log
+from openkb.stage_config import resolve_stage_model
 from openkb.watch_service import WatchRegistry
 
 logger = logging.getLogger(__name__)
@@ -277,7 +277,7 @@ def create_app() -> FastAPI:
         kb_dir = _resolve_kb(request.kb)
         bundle = resolve_credential_bundle(kb_dir)
         config = resolve_effective_config(kb_dir)[0]
-        model = config.get("model", DEFAULT_CONFIG["model"])
+        model = resolve_stage_model(config, "query")
         run_config = build_run_config_from_bundle(model, bundle)
 
         if request.stream:

@@ -149,6 +149,9 @@ def read_kb_config(kb_dir: Path) -> KbConfigResponse:
     global_config = load_global_config()
     return KbConfigResponse(
         model=effective["model"],
+        indexing_model=effective.get("indexing_model"),
+        compilation_model=effective.get("compilation_model"),
+        query_model=effective.get("query_model"),
         language=effective["language"],
         pageindex_threshold=effective["pageindex_threshold"],
         # Cleaned effective list (what the compiler will use), not the raw stored
@@ -159,6 +162,9 @@ def read_kb_config(kb_dir: Path) -> KbConfigResponse:
         sources=sources,
         global_values=GlobalConfigValues(
             model=global_config.get("model"),
+            indexing_model=global_config.get("indexing_model"),
+            compilation_model=global_config.get("compilation_model"),
+            query_model=global_config.get("query_model"),
             language=global_config.get("language"),
             pageindex_threshold=global_config.get("pageindex_threshold"),
             entity_types=global_config.get("entity_types"),
@@ -265,6 +271,9 @@ def read_global_config() -> GlobalConfigResponse:
         env_values = dict(dotenv_values(str(env_path)))
     return GlobalConfigResponse(
         model=gc.get("model", DEFAULT_CONFIG["model"]),
+        indexing_model=gc.get("indexing_model"),
+        compilation_model=gc.get("compilation_model"),
+        query_model=gc.get("query_model"),
         language=gc.get("language", DEFAULT_CONFIG["language"]),
         pageindex_threshold=gc.get("pageindex_threshold", DEFAULT_CONFIG["pageindex_threshold"]),
         # Effective global vocabulary (cleaned; defaults to DEFAULT_ENTITY_TYPES).

@@ -2529,6 +2529,9 @@ def test_global_config_get_defaults_when_absent(monkeypatch, tmp_path):
     body = client.get("/api/v1/config", headers=_auth()).json()
     assert body == {
         "model": "gpt-5.4",
+        "indexing_model": None,
+        "compilation_model": None,
+        "query_model": None,
         "language": "en",
         "pageindex_threshold": 20,
         # Default entity-type vocabulary when global.yaml sets none.

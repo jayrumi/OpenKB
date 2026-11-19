@@ -49,6 +49,7 @@ litellm.suppress_debug_info = True
 from dotenv import load_dotenv
 
 from openkb.agent.compiler import DEFAULT_COMPILE_CONCURRENCY, compile_long_doc
+from openkb.stage_config import resolve_stage_model
 from openkb.config import (
     DEFAULT_CONFIG,
     resolve_effective_config,
@@ -480,7 +481,7 @@ def _add_single_file_locked(
     # process-wide state; only the CLI path needs the legacy global setup.
     if bundle is None:
         _setup_llm_key(kb_dir)
-    model: str = config.get("model", DEFAULT_CONFIG["model"])
+    model: str = resolve_stage_model(config, "compilation")
 
     staging_dir = _staging_dir_for(kb_dir, file_path) if stage else None
 
@@ -718,7 +719,7 @@ def import_from_pageindex_cloud(doc_id: str, kb_dir: Path) -> Literal["added", "
     openkb_dir = kb_dir / ".openkb"
     config = resolve_effective_config(kb_dir)[0]
     _setup_llm_key(kb_dir)
-    model: str = config.get("model", DEFAULT_CONFIG["model"])
+    model: str = resolve_stage_model(config, "compilation")
 
     path_key = f"pageindex-cloud:{doc_id}"
     synthetic_hash = hashlib.sha256(path_key.encode("utf-8")).hexdigest()
@@ -1238,7 +1239,7 @@ def query(ctx, question, save, raw):
 
     config = resolve_effective_config(kb_dir)[0]
     _setup_llm_key(kb_dir)
-    model: str = config.get("model", DEFAULT_CONFIG["model"])
+    model: str = resolve_stage_model(config, "query")
 
     stream = _stream_to_tty()
     try:
@@ -1295,8 +1296,13 @@ def _cleanup_pageindex(
 
     _setup_llm_key(kb_dir)
     config = resolve_effective_config(kb_dir)[0]
-    model = config.get("model", DEFAULT_CONFIG.get("model", "gpt-5.4"))
-    client = PageIndexClient(model=model, storage_path=str(openkb_dir))
+    model = resolve_stage_model(config, "indexing")
+    if model.startswith("chatgpt/"):
+        from openkb.provider_compat import OAuthPageIndexClient
+
+        client = OAuthPageIndexClient(model=model, storage_path=str(openkb_dir))
+    else:
+        client = PageIndexClient(model=model, storage_path=str(openkb_dir))
     col = client.collection()
 
     if doc_id is None:
@@ -1968,7 +1974,7 @@ def recompile(ctx, doc_name, all_docs, dry_run, yes, refresh_schema):
 
     _setup_llm_key(kb_dir)
     config = resolve_effective_config(kb_dir)[0]
-    model: str = config.get("model", DEFAULT_CONFIG["model"])
+    model: str = resolve_stage_model(config, "compilation")
     max_concurrency = resolve_concurrency(config) or DEFAULT_COMPILE_CONCURRENCY
 
     # Import lazily and reference via the module so tests can patch
@@ -2168,7 +2174,7 @@ async def iter_recompile(
         if bundle is None:
             _setup_llm_key(kb_dir)
         config = resolve_effective_config(kb_dir)[0]
-        model: str = config.get("model", DEFAULT_CONFIG["model"])
+        model: str = resolve_stage_model(config, "compilation")
 
         from openkb.agent import compiler
 
@@ -2392,7 +2398,7 @@ def chat(ctx, resume, list_sessions_flag, delete_id, no_color, raw):
             return
         session = load_session(kb_dir, resolved)
     else:
-        model: str = config.get("model", DEFAULT_CONFIG["model"])
+        model: str = resolve_stage_model(config, "query")
         language: str = config.get("language", "en")
         session = ChatSession.new(kb_dir, model, language)
 
@@ -2458,7 +2464,7 @@ async def run_lint(kb_dir: Path) -> Path | None:
 
         config = resolve_effective_config(kb_dir)[0]
         _setup_llm_key(kb_dir)
-        model: str = config.get("model", DEFAULT_CONFIG["model"])
+        model: str = resolve_stage_model(config, "compilation")
 
         click.echo("Running structural lint...")
         structural_report = run_structural_lint(kb_dir)
@@ -2914,7 +2920,7 @@ def skill_new(ctx, name, intent, yes_flag):
         click.echo(f"[ERROR] {exc}", err=True)
         ctx.exit(1)
     config = resolve_effective_config(kb_dir)[0]
-    model = config.get("model", DEFAULT_CONFIG["model"])
+    model = resolve_stage_model(config, "compilation")
 
     # Overwrite handling (CLI-specific). Done AFTER key/config so a
     # missing key doesn't wipe the user's existing skill output.
@@ -3238,7 +3244,7 @@ def skill_eval(ctx, name, save_flag, eval_set_path, count):
         click.echo(f"[ERROR] {exc}", err=True)
         ctx.exit(1)
     config = resolve_effective_config(kb_dir)[0]
-    model = config.get("model", DEFAULT_CONFIG["model"])
+    model = resolve_stage_model(config, "compilation")
 
     eval_set: list[EvalPrompt] | None = None
     if eval_set_path:
@@ -3403,7 +3409,7 @@ def deck_new(ctx, name, intent, yes_flag, critique_flag, skill_name):
         click.echo(f"[ERROR] {exc}", err=True)
         ctx.exit(1)
     config = resolve_effective_config(kb_dir)[0]
-    model = config.get("model", DEFAULT_CONFIG["model"])
+    model = resolve_stage_model(config, "compilation")
 
     # Overwrite handling — inline because openkb.skill.workspace.save_iteration
     # is hard-wired to skill paths (uses skill_dir / skill_workspace_dir from
@@ -3754,7 +3760,7 @@ async def run_lint_report(
     config = resolve_effective_config(kb_dir)[0]
     if bundle is None:
         _setup_llm_key(kb_dir)
-    model: str = config.get("model", DEFAULT_CONFIG["model"])
+    model: str = resolve_stage_model(config, "compilation")
     run_config = build_run_config_from_bundle(model, bundle)
 
     if echo:

@@ -137,9 +137,12 @@ def _write_long_doc_artifacts(
     artifacts. Page images, when present, are written separately by the
     caller's page extractor — this helper only persists page text + summary.
     """
+    from openkb.locks import atomic_write_text
+
     sources_dir = kb_dir / "wiki" / "sources"
     sources_dir.mkdir(parents=True, exist_ok=True)
-    (sources_dir / f"{doc_name}.json").write_text(
+    atomic_write_text(
+        sources_dir / f"{doc_name}.json",
         json_mod.dumps(pages, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
@@ -147,8 +150,10 @@ def _write_long_doc_artifacts(
     summaries_dir = kb_dir / "wiki" / "summaries"
     summaries_dir.mkdir(parents=True, exist_ok=True)
     summary_path = summaries_dir / f"{doc_name}.md"
-    summary_path.write_text(
-        render_summary_md(tree, doc_name, doc_id, description=description), encoding="utf-8"
+    atomic_write_text(
+        summary_path,
+        render_summary_md(tree, doc_name, doc_id, description=description),
+        encoding="utf-8",
     )
     return summary_path
 
@@ -190,12 +195,26 @@ def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = Non
     openkb_dir = kb_dir / ".openkb"
     config = resolve_effective_config(kb_dir)[0]
 
-    model: str = config.get("model", "gpt-5.4")
+    backend = config.get("indexing_backend", "legacy")
+    if backend == "flash":
+        return _index_flash_long_document(pdf_path, kb_dir, source_name, config)
+    if backend != "legacy":
+        raise ValueError("indexing_backend must be 'legacy' or 'flash'")
+
+    from openkb.stage_config import resolve_stage_model
+
+    model = resolve_stage_model(config, "indexing")
     pageindex_api_key = os.environ.get("PAGEINDEX_API_KEY", "")
 
     index_config = _build_index_config(config)
 
-    client = PageIndexClient(
+    client_factory = PageIndexClient
+    if model.startswith("chatgpt/") and not pageindex_api_key:
+        from openkb.provider_compat import OAuthPageIndexClient, install_response_compat
+
+        install_response_compat()
+        client_factory = OAuthPageIndexClient
+    client = client_factory(
         api_key=pageindex_api_key or None,
         model=model,
         storage_path=str(openkb_dir),
@@ -214,6 +233,10 @@ def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = Non
             )
             break
         except Exception as exc:
+            from openkb.indexing_policy import quota_error
+
+            if quota_error(exc):
+                raise RuntimeError("Indexing stopped: quota exhausted; no document retry") from None
             logger.warning(
                 "PageIndex attempt %d/%d failed for %s: %s",
                 attempt,
@@ -292,6 +315,81 @@ def index_long_document(pdf_path: Path, kb_dir: Path, doc_name: str | None = Non
                 "PageIndex cleanup of %s failed after error; blob may be orphaned", doc_id
             )
         raise
+
+
+def _index_flash_long_document(
+    pdf_path: Path, kb_dir: Path, source_name: str, config: dict[str, Any]
+) -> IndexResult:
+    """Cache expensive Flash work first, then publish legacy-compatible artifacts.
+
+    Existing content is read as-is: selecting a backend is not a reindex action.
+    The caller retains the existing KB mutation/rollback contract.
+    """
+    import shutil
+    import time
+    import uuid
+
+    from pageindex.storage.sqlite import SQLiteStorage
+
+    from openkb.flash_adapter import index_pdf, pdf_hash
+
+    started = time.monotonic()
+    openkb_dir = kb_dir / ".openkb"
+    storage = SQLiteStorage(str(openkb_dir / "pageindex.db"))
+    managed = None
+    created_id = None
+    try:
+        storage.get_or_create_collection("default")
+        digest = pdf_hash(pdf_path)
+        doc_id = storage.find_document_by_hash("default", digest)
+        is_new = doc_id is None
+        if doc_id:
+            doc = storage.get_document("default", doc_id)
+            doc["structure"] = storage.get_document_structure("default", doc_id)
+        else:
+            doc = index_pdf(pdf_path, config)
+            if pdf_hash(pdf_path) != digest:
+                raise RuntimeError("PDF changed while Flash indexing was running")
+            doc_id = str(uuid.uuid4())
+        description = doc.get("doc_description", "")
+        tree = {
+            "doc_name": doc.get("doc_name", pdf_path.stem),
+            "doc_description": description,
+            "structure": doc["structure"],
+        }
+        images_dir = kb_dir / "wiki" / "sources" / "images" / source_name
+        pages = _normalize_page_content(_convert_pdf_to_pages(pdf_path, source_name, images_dir))
+        if not pages:
+            raise RuntimeError(f"No page content extracted for {pdf_path.name}")
+        if is_new:
+            managed = openkb_dir / "files" / "default" / f"{doc_id}.pdf"
+            managed.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(pdf_path, managed)
+            storage.save_document(
+                "default",
+                doc_id,
+                {
+                    **tree,
+                    "doc_type": "pdf",
+                    "file_path": str(managed),
+                    "file_hash": digest,
+                    "pages": pages,
+                },
+            )
+            created_id = doc_id
+        _write_long_doc_artifacts(tree, pages, source_name, doc_id, kb_dir, description)
+        logger.info(
+            "stage=indexing backend=flash artifacts_duration_s=%.3f", time.monotonic() - started
+        )
+        return IndexResult(doc_id=doc_id, description=description, tree=tree)
+    except BaseException:
+        if created_id:
+            storage.delete_document("default", created_id)
+        if managed:
+            managed.unlink(missing_ok=True)
+        raise
+    finally:
+        storage.close()
 
 
 # PageIndex's get_page_content rejects a single page range covering more than

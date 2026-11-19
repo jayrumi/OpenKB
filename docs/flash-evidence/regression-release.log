@@ -1,0 +1,39 @@
+........................................................................ [  5%]
+........................................................................ [ 10%]
+........................................................................ [ 16%]
+........................................................................ [ 21%]
+........................................................................ [ 27%]
+........................................................................ [ 32%]
+........................................................................ [ 37%]
+......................................................................... [ 43%]
+........................................................................ [ 48%]
+........................................................................ [ 54%]
+........................................................................ [ 59%]
+........................................................................ [ 64%]
+........................................................................ [ 70%]
+........................................................................ [ 75%]
+........................................................................ [ 81%]
+........................................................................ [ 86%]
+........................................................................ [ 92%]
+........................................................................ [ 97%]
+..................................                                       [100%]
+=============================== warnings summary ===============================
+tests/test_flash_sdk.py::test_actual_sdk_layout_and_worker_with_mocked_llm
+  /home/jayrumi/openkb-development/venv/lib/python3.13/site-packages/fitz/__init__.py:17: FutureWarning: The `fitz` API is deprecated and will be removed in future. Use `import pymupdf` instead.
+    warnings.warn(
+
+tests/test_remove.py::test_cli_remove_ignores_body_only_reference_in_plan
+  /usr/lib/python3.13/pathlib/_local.py:289: RuntimeWarning: coroutine 'compile_short_doc' was never awaited
+    @property
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_remove.py::test_cli_remove_calls_pageindex_delete_with_stored_doc_id
+  /usr/lib/python3.13/unittest/mock.py:2247: RuntimeWarning: coroutine 'compile_long_doc' was never awaited
+    def __init__(self, name, parent):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1330 passed, 3 warnings in 31.48s
+..

@@ -417,6 +417,9 @@ class _KbConfigWritable(BaseModel):
     """
 
     model: str | None = None
+    indexing_model: str | None = Field(default=None, min_length=1, pattern=r"\S")
+    compilation_model: str | None = Field(default=None, min_length=1, pattern=r"\S")
+    query_model: str | None = Field(default=None, min_length=1, pattern=r"\S")
     language: str | None = None
     pageindex_threshold: int | None = None
     # Entity-type vocabulary for extraction. A list REPLACES the layer below; an
@@ -434,6 +437,9 @@ class GlobalConfigValues(BaseModel):
     """Raw global-layer values (null where global.yaml is silent)."""
 
     model: str | None = None
+    indexing_model: str | None = None
+    compilation_model: str | None = None
+    query_model: str | None = None
     language: str | None = None
     pageindex_threshold: int | None = None
     entity_types: list[str] | None = None
@@ -441,6 +447,9 @@ class GlobalConfigValues(BaseModel):
 
 class GlobalConfigResponse(BaseModel):
     model: str
+    indexing_model: str | None = None
+    compilation_model: str | None = None
+    query_model: str | None = None
     language: str
     pageindex_threshold: int
     # Effective global entity-type vocabulary (cleaned; always includes "other").
@@ -476,6 +485,9 @@ class GlobalConfigPatchRequest(BaseModel):
 
 class KbConfigResponse(BaseModel):
     model: str
+    indexing_model: str | None = None
+    compilation_model: str | None = None
+    query_model: str | None = None
     language: str
     pageindex_threshold: int
     # Effective entity-type vocabulary (cleaned; always includes "other").

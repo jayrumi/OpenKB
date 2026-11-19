@@ -60,6 +60,10 @@ def build_query_agent(
     bundle: "LlmCredentialBundle | None" = None,
 ) -> Agent:
     """Build and return the Q&A agent."""
+    if model.startswith("chatgpt/"):
+        from openkb.provider_compat import install_response_compat
+
+        install_response_compat()
     schema_md = get_agents_md(Path(wiki_root))
     instructions = _QUERY_INSTRUCTIONS_TEMPLATE.format(schema_md=schema_md)
     instructions += f"\n\nIMPORTANT: Answer in {language} language."

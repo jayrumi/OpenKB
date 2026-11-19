@@ -1,0 +1,45 @@
+{
+  "application_smoke_calls": 3,
+  "total_tokens": 5551,
+  "models": [
+    {
+      "model": "chatgpt/gpt-6-luna",
+      "ok": true,
+      "content": "OK",
+      "tokens": 1639
+    },
+    {
+      "model": "chatgpt/gpt-6.2-sol",
+      "ok": true,
+      "content": "OK",
+      "tokens": 1639
+    }
+  ],
+  "flash_smoke": {
+    "attempted_llm_calls": 1,
+    "usage": [
+      {
+        "prompt_tokens": 2217,
+        "completion_tokens": 56,
+        "total_tokens": 2273
+      }
+    ],
+    "ok": true,
+    "result": {
+      "doc_name": "one-node-long.pdf",
+      "doc_title": "Fact Table Grain",
+      "structure": [
+        {
+          "title": "Page 1",
+          "node_id": "0000",
+          "start_index": 1,
+          "end_index": 1,
+          "summary": "Defines a sales fact table at the order-line grain with quantity and net amount measures, warns against mixing daily totals with line items, describes Type 2 dimensions preserving history via surrogate keys, and notes checkpointing resumes completed indexing after compilation failure."
+        }
+      ],
+      "has_abstract_or_references_section": false,
+      "toc_source": "pages"
+    },
+    "duration_s": 3.09
+  }
+}
