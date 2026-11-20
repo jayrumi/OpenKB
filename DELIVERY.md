@@ -1,5 +1,7 @@
 # Delivery: OpenKB isolated PageIndex Flash adapter
 
+**Follow-up:** the initial partial acceptance status below is superseded by `REPAIR_REPORT.md`: Codex SSE, required-page failure handling and loop-owned client cleanup are repaired, and real compilation → query/chat plus a browser Web UI check passed on an isolated copy. Production deployment is still not performed or authorized.
+
 ## Status
 
 Implemented in `/home/jayrumi/openkb-development/flash-adapter`, branch `feature/pageindex-flash-codex`, based on upstream `ff54396e575ee6feb0113b631a34caa082b441cc`. **Not deployed.** Production source, Python environment, service, Web UI binding and network configuration were not modified. No existing book was reindexed.

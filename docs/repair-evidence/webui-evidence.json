@@ -1,0 +1,8 @@
+{
+  "url": "http://127.0.0.1:17566/#/chat/20261120-095524-ido",
+  "text": "K\nOpenKB Studio\nHome\nKnowledge bases\nKnowledge bases\ndata-modeling\n2\nSettings\nВ warehouse-modeling как\nВ warehouse-modeling каково зерно таблицы фактов продаж? Прочитай исходную страницу PDF и укажи её номер.\n\nЗагружу инструкции OpenKB для поиска исходной страницы.Проверю в указателе, как открыть исходный документ warehouse-modeling.\n\nRead index.md\n\nПосмотрю оглавление warehouse-modeling, чтобы найти нужную страницу PDF.\n\nRead summaries/warehouse-modeling.md\n\nОткрою страницу 2 исходного PDF, чтобы проверить точную формулировку.\n\nRead warehouse-modeling\n\nЗерно таблицы фактов продаж — одна товарная позиция в заказе: каждой позиции соответствует отдельная строка таблицы.\n\nИсточник: warehouse-modeling, страница 2 PDF, раздел «1. Grain and Facts».\n\ndata-modeling\nType / for commands",
+  "console_errors": [],
+  "question": "В warehouse-modeling каково зерно таблицы фактов продаж? Прочитай исходную страницу PDF и укажи её номер.",
+  "verified_citation_page": 2,
+  "staging_only": true
+}

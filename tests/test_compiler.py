@@ -1834,16 +1834,17 @@ class TestCompileConceptsPlan:
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(side_effect=_mock_completion([plan_response]))
             mock_litellm.acompletion = AsyncMock(side_effect=truncated_acompletion)
-            await _compile_concepts(
-                wiki,
-                tmp_path,
-                "gpt-4o-mini",
-                {"role": "system", "content": "s"},
-                {"role": "user", "content": "d"},
-                "summary",
-                "test-doc",
-                5,
-            )
+            with pytest.raises(RuntimeError, match="Incomplete compilation"):
+                await _compile_concepts(
+                    wiki,
+                    tmp_path,
+                    "gpt-4o-mini",
+                    {"role": "system", "content": "s"},
+                    {"role": "user", "content": "d"},
+                    "summary",
+                    "test-doc",
+                    5,
+                )
         text = (wiki / "concepts" / "attention.md").read_text()
         assert "Complete original body." in text, "existing page must survive a truncated update"
         assert "Truncated tail" not in text
@@ -1870,16 +1871,17 @@ class TestCompileConceptsPlan:
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(side_effect=_mock_completion([plan_response]))
             mock_litellm.acompletion = AsyncMock(side_effect=truncated_acompletion)
-            await _compile_concepts(
-                wiki,
-                tmp_path,
-                "gpt-4o-mini",
-                {"role": "system", "content": "s"},
-                {"role": "user", "content": "d"},
-                "summary",
-                "test-doc",
-                5,
-            )
+            with pytest.raises(RuntimeError, match="Incomplete compilation"):
+                await _compile_concepts(
+                    wiki,
+                    tmp_path,
+                    "gpt-4o-mini",
+                    {"role": "system", "content": "s"},
+                    {"role": "user", "content": "d"},
+                    "summary",
+                    "test-doc",
+                    5,
+                )
         assert not (wiki / "concepts" / "ghost.md").exists(), "truncated create must be skipped"
 
     def test_page_fields_maps_response_shapes(self):
@@ -1939,16 +1941,17 @@ class TestCompileConceptsPlan:
         with patch("openkb.agent.compiler.litellm") as mock_litellm:
             mock_litellm.completion = MagicMock(side_effect=_mock_completion([plan_response]))
             mock_litellm.acompletion = AsyncMock(side_effect=truncated_acompletion)
-            await _compile_concepts(
-                wiki,
-                tmp_path,
-                "gpt-4o-mini",
-                {"role": "system", "content": "s"},
-                {"role": "user", "content": "d"},
-                "summary",
-                "test-doc",
-                5,
-            )
+            with pytest.raises(RuntimeError, match="Incomplete compilation"):
+                await _compile_concepts(
+                    wiki,
+                    tmp_path,
+                    "gpt-4o-mini",
+                    {"role": "system", "content": "s"},
+                    {"role": "user", "content": "d"},
+                    "summary",
+                    "test-doc",
+                    5,
+                )
         text = (wiki / "entities" / "google.md").read_text()
         assert "Complete original entity body." in text, "existing entity must survive truncation"
         assert "Truncated entity tail" not in text
@@ -1977,16 +1980,17 @@ class TestCompileConceptsPlan:
             mock_litellm.acompletion = AsyncMock(
                 side_effect=_mock_completion([empty_content_response])
             )
-            await _compile_concepts(
-                wiki,
-                tmp_path,
-                "gpt-4o-mini",
-                system_msg,
-                doc_msg,
-                "Summary.",
-                "test-doc",
-                5,
-            )
+            with pytest.raises(RuntimeError, match="Incomplete compilation"):
+                await _compile_concepts(
+                    wiki,
+                    tmp_path,
+                    "gpt-4o-mini",
+                    system_msg,
+                    doc_msg,
+                    "Summary.",
+                    "test-doc",
+                    5,
+                )
 
         # The concept page must NOT be written (generation raised + dropped).
         page = wiki / "concepts" / "ghost-concept.md"

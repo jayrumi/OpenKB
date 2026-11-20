@@ -50,6 +50,7 @@ from dotenv import load_dotenv
 
 from openkb.agent.compiler import DEFAULT_COMPILE_CONCURRENCY, compile_long_doc
 from openkb.stage_config import resolve_stage_model
+from openkb.llm_lifecycle import run_owned_llm_loop
 from openkb.config import (
     DEFAULT_CONFIG,
     resolve_effective_config,
@@ -433,7 +434,7 @@ def _run_compile_with_retry(coro_factory, label: str) -> None:
     click.echo(f"  {label}...")
     for attempt in range(2):
         try:
-            asyncio.run(coro_factory())
+            run_owned_llm_loop(coro_factory())
             return
         except Exception as exc:
             if attempt == 0:
@@ -1980,6 +1981,8 @@ def recompile(ctx, doc_name, all_docs, dry_run, yes, refresh_schema):
     # Import lazily and reference via the module so tests can patch
     # ``openkb.agent.compiler.compile_*`` and see the call.
     from openkb.agent import compiler
+    from openkb.add_coordinator import DirtyRollbackError
+    from openkb.recompile import recompile_mutation
 
     recompiled = 0
     skipped = 0
@@ -2011,16 +2014,19 @@ def recompile(ctx, doc_name, all_docs, dry_run, yes, refresh_schema):
             click.echo(f"[{i}/{total}] Recompiling long doc {name}...")
             start = time.time()
             try:
-                asyncio.run(
-                    compiler.compile_long_doc(
-                        name,
-                        summary_path,
-                        doc_id,
-                        kb_dir,
-                        model,
-                        max_concurrency=max_concurrency,
+                with recompile_mutation(kb_dir, name):
+                    run_owned_llm_loop(
+                        compiler.compile_long_doc(
+                            name,
+                            summary_path,
+                            doc_id,
+                            kb_dir,
+                            model,
+                            max_concurrency=max_concurrency,
+                        )
                     )
-                )
+            except DirtyRollbackError:
+                raise
             except Exception as exc:
                 click.echo(f"  [ERROR] Compilation failed: {exc}")
                 logging.getLogger(__name__).debug("Recompile traceback:", exc_info=True)
@@ -2040,15 +2046,18 @@ def recompile(ctx, doc_name, all_docs, dry_run, yes, refresh_schema):
             click.echo(f"[{i}/{total}] Recompiling short doc {name}...")
             start = time.time()
             try:
-                asyncio.run(
-                    compiler.compile_short_doc(
-                        name,
-                        source_path,
-                        kb_dir,
-                        model,
-                        max_concurrency=max_concurrency,
+                with recompile_mutation(kb_dir, name):
+                    run_owned_llm_loop(
+                        compiler.compile_short_doc(
+                            name,
+                            source_path,
+                            kb_dir,
+                            model,
+                            max_concurrency=max_concurrency,
+                        )
                     )
-                )
+            except DirtyRollbackError:
+                raise
             except Exception as exc:
                 click.echo(f"  [ERROR] Compilation failed: {exc}")
                 logging.getLogger(__name__).debug("Recompile traceback:", exc_info=True)
@@ -2176,7 +2185,9 @@ async def iter_recompile(
         config = resolve_effective_config(kb_dir)[0]
         model: str = resolve_stage_model(config, "compilation")
 
+        from openkb.add_coordinator import DirtyRollbackError
         from openkb.agent import compiler
+        from openkb.recompile import recompile_mutation
 
         recompiled = 0
         skipped = 0
@@ -2219,9 +2230,12 @@ async def iter_recompile(
                 else:
                     start = time.time()
                     try:
-                        await compiler.compile_long_doc(
-                            name, summary_path, doc_id, kb_dir, model, bundle=bundle
-                        )
+                        with recompile_mutation(kb_dir, name):
+                            await compiler.compile_long_doc(
+                                name, summary_path, doc_id, kb_dir, model, bundle=bundle
+                            )
+                    except DirtyRollbackError:
+                        raise
                     except Exception as exc:
                         doc = {
                             "name": name,
@@ -2255,9 +2269,12 @@ async def iter_recompile(
                 else:
                     start = time.time()
                     try:
-                        await compiler.compile_short_doc(
-                            name, source_path, kb_dir, model, bundle=bundle
-                        )
+                        with recompile_mutation(kb_dir, name):
+                            await compiler.compile_short_doc(
+                                name, source_path, kb_dir, model, bundle=bundle
+                            )
+                    except DirtyRollbackError:
+                        raise
                     except Exception as exc:
                         doc = {
                             "name": name,

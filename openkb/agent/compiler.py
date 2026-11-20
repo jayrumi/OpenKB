@@ -507,20 +507,10 @@ async def _llm_call_page_async(
 
 
 async def _close_async_llm_clients() -> None:
-    """Close LiteLLM's cached async (aiohttp) clients for the current loop.
+    """Compatibility helper; call only when the owning event loop is exiting."""
+    from openkb.llm_lifecycle import close_current_loop_clients
 
-    LiteLLM caches its async clients per event loop. ``add_single_file`` runs
-    each doc in its own ``asyncio.run`` loop, so without this the clients are
-    orphaned when the loop is torn down and their connections pile up in
-    CLOSE-WAIT, leaking sockets/FDs across a long ingest. Call this from a
-    ``finally`` inside the compile coroutines so the clients are closed in the
-    same loop that created them. Best-effort: never raises, so cleanup can't
-    mask a real compilation error or break ingest.
-    """
-    try:
-        await litellm.close_litellm_async_clients()
-    except Exception:
-        logger.debug("litellm async client cleanup failed", exc_info=True)
+    await close_current_loop_clients()
 
 
 def _warn_if_truncated(response, step_name: str, max_tokens: int | None) -> bool:
@@ -2011,53 +2001,42 @@ async def _compile_concepts(
             asyncio.gather(*entity_tasks, return_exceptions=True),
         )
 
-    if tasks:
-        failure_types: list[str] = []
-        for r in results:
-            if isinstance(r, Exception):
-                logger.warning("Concept generation failed: %s", r)
-                failure_types.append(type(r).__name__)
-                continue
-            name, page_content, is_update, brief = r
-            pending_writes.append((name, page_content, is_update, brief))
-            safe_name = _sanitize_concept_name(name)
-            concept_names.append(safe_name)
-            if brief:
-                concept_briefs_map[safe_name] = brief
+    # Every planned page is required: the whitelist already permits links to
+    # all of them. Publishing successful siblings after a failed task would
+    # leave dangling links and let add register an incomplete document as done.
+    # Drain both gathers first so no tasks can mutate state after rollback.
+    failures: list[str] = []
+    first_error: Exception | None = None
+    page_labels = (
+        [f"concept: {c['name']}" for c in create_items]
+        + [f"update: {c['name']}" for c in update_items]
+        + [f"entity: {e['name']}" for e in entity_create]
+        + [f"entity-update: {e['name']}" for e in entity_update]
+    )
+    for label, result in zip(page_labels, [*results, *entity_results], strict=True):
+        if isinstance(result, BaseException):
+            if not isinstance(result, Exception):
+                raise result
+            first_error = first_error or result
+            failures.append(f"{label} ({type(result).__name__})")
+    if failures:
+        raise RuntimeError(
+            f"Incomplete compilation for {doc_name}: {len(failures)} required page(s) failed: "
+            + "; ".join(failures)
+        ) from first_error
 
-        # Include exception type names inline so the stdout line is
-        # self-contained — per-failure WARNINGs go to stderr.
-        written = len(pending_writes)
-        if written < total:
-            reason = ", ".join(sorted(set(failure_types))) if failure_types else "see log (stderr)"
-            sys.stdout.write(
-                f"    [WARN] {total} concept(s) planned but only {written} written "
-                f"for {doc_name} ({reason}).\n"
-            )
-            sys.stdout.flush()
+    for result in results:
+        assert not isinstance(result, BaseException)  # validated before any writes
+        name, page_content, is_update, brief = result
+        pending_writes.append((name, page_content, is_update, brief))
+        safe_name = _sanitize_concept_name(name)
+        concept_names.append(safe_name)
+        if brief:
+            concept_briefs_map[safe_name] = brief
 
-    if entity_tasks:
-        entity_failure_types: list[str] = []
-        for r in entity_results:
-            if isinstance(r, Exception):
-                logger.warning("Entity generation failed: %s", r)
-                entity_failure_types.append(type(r).__name__)
-                continue
-            name, page_content, brief, etype = r
-            entity_pending.append((name, page_content, brief, etype))
-
-        ewritten = len(entity_pending)
-        if ewritten < etotal:
-            reason = (
-                ", ".join(sorted(set(entity_failure_types)))
-                if entity_failure_types
-                else "see log (stderr)"
-            )
-            sys.stdout.write(
-                f"    [WARN] {etotal} entity(ies) planned but only {ewritten} written "
-                f"for {doc_name} ({reason}).\n"
-            )
-            sys.stdout.flush()
+    for result in entity_results:
+        assert not isinstance(result, BaseException)  # validated before any writes
+        entity_pending.append(result)
 
     # Strip ghost wikilinks from entity bodies and write each page.
     for name, page_content, brief, etype in entity_pending:
@@ -2274,26 +2253,22 @@ async def compile_short_doc(
         summary = summary_raw
 
     # --- Steps 2-4: Concept plan → generate/update → summary rewrite → index ---
-    try:
-        await _compile_concepts(
-            wiki_dir,
-            kb_dir,
-            model,
-            system_msg,
-            doc_msg,
-            summary,
-            doc_name,
-            max_concurrency,
-            doc_brief=doc_brief,
-            doc_type="short",
-            rewrite_summary=True,
-            entity_types=entity_types,
-            bundle=bundle,
-        )
-    finally:
-        # Close per-loop litellm async clients before asyncio.run tears this
-        # loop down, to avoid the CLOSE-WAIT/FD leak across a long ingest.
-        await _close_async_llm_clients()
+    # The caller owns the event loop; another request may still use its clients.
+    await _compile_concepts(
+        wiki_dir,
+        kb_dir,
+        model,
+        system_msg,
+        doc_msg,
+        summary,
+        doc_name,
+        max_concurrency,
+        doc_brief=doc_brief,
+        doc_type="short",
+        rewrite_summary=True,
+        entity_types=entity_types,
+        bundle=bundle,
+    )
 
 
 async def compile_long_doc(
@@ -2359,22 +2334,18 @@ async def compile_long_doc(
     overview = _llm_call(model, [system_msg, doc_msg], "overview", bundle=bundle)
 
     # --- Steps 2-4: Concept plan → generate/update → index ---
-    try:
-        await _compile_concepts(
-            wiki_dir,
-            kb_dir,
-            model,
-            system_msg,
-            doc_msg,
-            overview,
-            doc_name,
-            max_concurrency,
-            doc_brief=doc_description,
-            doc_type="pageindex",
-            entity_types=entity_types,
-            bundle=bundle,
-        )
-    finally:
-        # Close per-loop litellm async clients before asyncio.run tears this
-        # loop down, to avoid the CLOSE-WAIT/FD leak across a long ingest.
-        await _close_async_llm_clients()
+    # CLI/thread jobs clean up at loop teardown; a live API loop stays reusable.
+    await _compile_concepts(
+        wiki_dir,
+        kb_dir,
+        model,
+        system_msg,
+        doc_msg,
+        overview,
+        doc_name,
+        max_concurrency,
+        doc_brief=doc_description,
+        doc_type="pageindex",
+        entity_types=entity_types,
+        bundle=bundle,
+    )

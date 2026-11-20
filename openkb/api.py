@@ -159,6 +159,9 @@ def create_app() -> FastAPI:
             yield
         finally:
             registry.stop_all()
+            from openkb.llm_lifecycle import close_current_loop_clients
+
+            await close_current_loop_clients()
 
     app = FastAPI(title="OpenKB API", lifespan=lifespan)
 

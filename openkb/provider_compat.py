@@ -2,7 +2,8 @@
 
 PageIndex 0.3's key check predates LiteLLM's ChatGPT OAuth provider. LiteLLM
 1.87.2 also splits Responses commentary and tool calls into alternative chat
-choices, dropping tools for clients that consume only the first choice.
+choices, dropping tools for clients that consume only the first choice. Its
+metadata-driven fake streaming also strips Codex's required wire stream flag.
 The shims preserve model identifiers and credentials. Codex requests explicitly
 select the Responses transport even when legacy model metadata lacks a new ID.
 """
@@ -11,6 +12,7 @@ from __future__ import annotations
 
 import importlib
 from functools import wraps
+from importlib.metadata import version
 from threading import RLock
 from typing import Any
 
@@ -70,6 +72,23 @@ def install_response_compat() -> None:
     )
 
     with _install_lock:
+        if version("litellm") == "1.87.2":
+            from litellm.llms.chatgpt.responses.transformation import ChatGPTResponsesAPIConfig
+
+            original_stream = ChatGPTResponsesAPIConfig.should_fake_stream
+            if not getattr(original_stream, "_openkb_codex_native_stream", False):
+
+                @wraps(original_stream)
+                def native_stream(self: Any, *args: Any, **kwargs: Any) -> bool:
+                    # Codex requires SSE, including for unknown model IDs. The
+                    # inherited OpenAI metadata fallback selects fake streaming;
+                    # HTTPHandler then removes the provider's required stream=True.
+                    # Nonstream callers keep upstream's buffered SSE parser.
+                    return False
+
+                setattr(native_stream, "_openkb_codex_native_stream", True)
+                setattr(ChatGPTResponsesAPIConfig, "should_fake_stream", native_stream)
+
         # Legacy bundled metadata predates the requested GPT-6 IDs. Codex only
         # serves Responses; transport selection must not depend on that map.
         main = importlib.import_module("litellm.main")
@@ -94,6 +113,8 @@ def install_response_compat() -> None:
             return coalesce_response_choices(original(*args, **kwargs))
 
         convert._openkb_coalesces_outputs = True  # type: ignore[attr-defined]
-        LiteLLMResponsesTransformationHandler._convert_response_output_to_choices = staticmethod(
-            convert
+        setattr(
+            LiteLLMResponsesTransformationHandler,
+            "_convert_response_output_to_choices",
+            staticmethod(convert),
         )
