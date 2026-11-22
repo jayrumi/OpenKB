@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from openkb.locks import atomic_write_text
+from openkb.summary_policy import SUMMARY_POLICY_VERSION
 
 logger = logging.getLogger(__name__)
 SDK_VERSION = "0.7.4"
@@ -185,6 +186,7 @@ def index_pdf(pdf_path: Path, config: dict) -> dict:
         ):
             raise ValueError(f"{key} is outside the supported finite range")
     policy = {
+        "summary_policy_version": SUMMARY_POLICY_VERSION,
         "model": model,
         "summary_model": model,
         "summary_concurrency": concurrency,

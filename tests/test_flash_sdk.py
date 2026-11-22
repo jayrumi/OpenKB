@@ -41,8 +41,12 @@ from pageindex.flash import page_index_flash
 utils.start_learning_if_effort_dropped = lambda *a, **kw: True
 utils.learn_model_if_effort_dropped = lambda *a, **kw: None
 calls = []
+requests = []
 async def fake(**kw):
     calls.append(kw['model'])
+    requests.append(kw['messages'])
+    assert kw['messages'][0]['role'] == 'system'
+    assert 'SUMMARY ATTRIBUTION POLICY' in kw['messages'][0]['content']
     usage = SimpleNamespace(prompt_tokens=2, completion_tokens=1, total_tokens=3)
     message = SimpleNamespace(content='{"summary": "Mock section summary"}')
     return SimpleNamespace(usage=usage, choices=[SimpleNamespace(message=message)])
@@ -52,6 +56,8 @@ assert layout['structure']
 with flash_worker.completion_policy({'max_calls': 10}):
     result = flash_worker.execute({'pdf_path': sys.argv[2], 'model': 'chatgpt/gpt-6-luna'})
 assert len(calls) >= 2 and all(model == 'chatgpt/gpt-6-luna' for model in calls)
+assert any('one-sentence description' in str(messages[1:]) for messages in requests)
+assert any('one-sentence description' not in str(messages[1:]) for messages in requests)
 print('RESULT_JSON=' + json.dumps(result))
 """
     completed = subprocess.run(

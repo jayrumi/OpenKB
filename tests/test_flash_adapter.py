@@ -28,6 +28,32 @@ def result():
     }
 
 
+def test_summary_policy_version_is_forwarded_and_separates_complete_caches(tmp_path, monkeypatch):
+    from openkb import flash_adapter as adapter
+
+    pdf = tmp_path / "book.pdf"
+    pdf.write_bytes(b"pdf")
+    runner = Mock(return_value=result())
+    monkeypatch.setattr(adapter, "run_worker", runner)
+    config = {
+        "flash_python": sys.executable,
+        "model": "exact",
+        "flash_cache_dir": str(tmp_path / "cache"),
+    }
+    adapter.index_pdf(pdf, config)
+    first_version = runner.call_args.args[1]["summary_policy_version"]
+    assert first_version >= 1
+    first_cache = {p.name: p.read_bytes() for p in (tmp_path / "cache").glob("*.json")}
+    assert first_cache
+    adapter.index_pdf(pdf, config)
+    assert runner.call_count == 1
+    monkeypatch.setattr(adapter, "SUMMARY_POLICY_VERSION", first_version + 1)
+    adapter.index_pdf(pdf, config)
+    assert runner.call_count == 2
+    assert runner.call_args.args[1]["summary_policy_version"] == first_version + 1
+    assert all((tmp_path / "cache" / n).read_bytes() == data for n, data in first_cache.items())
+
+
 @pytest.mark.parametrize(
     "key,value",
     [

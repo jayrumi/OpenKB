@@ -23,6 +23,7 @@ if not __package__:
 _policy = importlib.import_module("openkb.indexing_policy" if __package__ else "indexing_policy")
 _structure = importlib.import_module("openkb.flash_structure" if __package__ else "flash_structure")
 _reasoning = importlib.import_module("openkb.reasoning" if __package__ else "reasoning")
+_summary = importlib.import_module("openkb.summary_policy" if __package__ else "summary_policy")
 FlashAbort = _policy.FlashAbort
 bounded_completion = _policy.bounded_completion
 quota_error = _policy.quota_error
@@ -31,6 +32,9 @@ quota_error = _policy.quota_error
 @contextlib.contextmanager
 def completion_policy(request):
     """Pinned 0.7.4 private seam; replace both SDK retry loops in this worker only."""
+    summary_version = request.get("summary_policy_version", _summary.SUMMARY_POLICY_VERSION)
+    if type(summary_version) is not int or summary_version != _summary.SUMMARY_POLICY_VERSION:
+        raise ValueError("Unsupported summary policy version")
     import asyncio
 
     import litellm
@@ -78,6 +82,7 @@ def completion_policy(request):
         nonlocal stopped
         if stopped is not None:
             raise stopped
+        messages = _summary.summary_messages(messages)
         task = asyncio.current_task()
         active.add(task)
         attempts = 0

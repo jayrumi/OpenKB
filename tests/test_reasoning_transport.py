@@ -148,6 +148,8 @@ assert requests, 'SDK never reached HTTP'
 expected = ['none', 'low'] if sys.argv[3] == 'none' else ['low']
 assert [r.get('reasoning', {}).get('effort') for r in requests] == expected, requests
 assert requests[0]['model'] == 'gpt-6-luna'
+assert all(json.dumps(r).count('SUMMARY ATTRIBUTION POLICY') == 1 for r in requests)
+assert all('explicitly combined' in json.dumps(r) for r in requests)
 print('WIRE_OK')
 """
     source = str(Path(__file__).resolve().parents[1] / "openkb")
