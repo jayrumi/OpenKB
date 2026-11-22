@@ -202,6 +202,11 @@ def build_query_agent(
     else:
         model_settings = resolve_model_settings()
 
+    if model.startswith("chatgpt/"):
+        # Agents 0.17 omits stream_options unless explicitly requested;
+        # LiteLLM then discards provider usage from streamed completions.
+        model_settings["include_usage"] = True
+
     effort = (
         bundle.reasoning_effort
         if bundle and bundle.reasoning_effort is not None
