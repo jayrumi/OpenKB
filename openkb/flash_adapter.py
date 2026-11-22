@@ -16,7 +16,7 @@ from openkb.locks import atomic_write_text
 
 logger = logging.getLogger(__name__)
 SDK_VERSION = "0.7.4"
-CACHE_SCHEMA = 2
+CACHE_SCHEMA = 4
 
 
 def pdf_hash(path: Path) -> str:
@@ -78,13 +78,28 @@ def validate_result(result: dict) -> dict:
         or diagnostics["retries"] > diagnostics["calls"]
     ):
         raise ValueError("Invalid Flash diagnostics")
+    clean_diagnostics = {key: diagnostics[key] for key in ("calls", "retries")}
+    reasoning_keys = (
+        "requested_reasoning_effort",
+        "effective_reasoning_effort",
+        "reasoning_fallbacks",
+    )
+    if any(key in diagnostics for key in reasoning_keys):
+        from openkb.stage_config import REASONING_EFFORTS
+
+        if any(diagnostics.get(key) not in REASONING_EFFORTS for key in reasoning_keys[:2]):
+            raise ValueError("Invalid Flash reasoning diagnostics")
+        count_fallbacks = diagnostics.get("reasoning_fallbacks")
+        if type(count_fallbacks) is not int or not 0 <= count_fallbacks <= diagnostics["retries"]:
+            raise ValueError("Invalid Flash reasoning fallback count")
+        clean_diagnostics.update({key: diagnostics[key] for key in reasoning_keys})
     # Do not persist or log arbitrary SDK fields (which may contain prompts).
     return (
         {
             key: result[key]
             for key in ("sdk_version", "doc_name", "doc_description", "structure", "page_count")
         }
-        | {"diagnostics": {key: diagnostics[key] for key in ("calls", "retries")}}
+        | {"diagnostics": clean_diagnostics}
         | {
             "usage": {
                 k: usage[k]
@@ -136,7 +151,7 @@ def index_pdf(pdf_path: Path, config: dict) -> dict:
     python = config.get("flash_python")
     if not isinstance(python, str) or not python:
         raise ValueError("indexing_backend: flash requires flash_python")
-    from openkb.stage_config import resolve_stage_model
+    from openkb.stage_config import resolve_stage_model, resolve_stage_reasoning
 
     model = resolve_stage_model(config, "indexing")
     if not isinstance(model, str) or not model:
@@ -180,6 +195,9 @@ def index_pdf(pdf_path: Path, config: dict) -> dict:
         "max_calls": config.get("flash_max_calls"),
         "max_tokens": config.get("flash_max_tokens"),
     }
+    effort = resolve_stage_reasoning(config, "indexing")
+    if effort is not None:
+        policy["summary_reasoning_effort"] = effort
     for name in ("max_calls", "max_tokens"):
         if policy[name] is not None and (type(policy[name]) is not int or policy[name] < 1):
             raise ValueError(f"Flash {name} must be a positive integer")

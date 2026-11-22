@@ -420,6 +420,16 @@ class _KbConfigWritable(BaseModel):
     indexing_model: str | None = Field(default=None, min_length=1, pattern=r"\S")
     compilation_model: str | None = Field(default=None, min_length=1, pattern=r"\S")
     query_model: str | None = Field(default=None, min_length=1, pattern=r"\S")
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None = None
+    indexing_reasoning_effort: (
+        Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None
+    ) = None
+    compilation_reasoning_effort: (
+        Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None
+    ) = None
+    query_reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None = (
+        None
+    )
     language: str | None = None
     pageindex_threshold: int | None = None
     # Entity-type vocabulary for extraction. A list REPLACES the layer below; an
@@ -440,6 +450,10 @@ class GlobalConfigValues(BaseModel):
     indexing_model: str | None = None
     compilation_model: str | None = None
     query_model: str | None = None
+    reasoning_effort: str | None = None
+    indexing_reasoning_effort: str | None = None
+    compilation_reasoning_effort: str | None = None
+    query_reasoning_effort: str | None = None
     language: str | None = None
     pageindex_threshold: int | None = None
     entity_types: list[str] | None = None
@@ -450,6 +464,10 @@ class GlobalConfigResponse(BaseModel):
     indexing_model: str | None = None
     compilation_model: str | None = None
     query_model: str | None = None
+    reasoning_effort: str | None = None
+    indexing_reasoning_effort: str | None = None
+    compilation_reasoning_effort: str | None = None
+    query_reasoning_effort: str | None = None
     language: str
     pageindex_threshold: int
     # Effective global entity-type vocabulary (cleaned; always includes "other").
@@ -488,6 +506,10 @@ class KbConfigResponse(BaseModel):
     indexing_model: str | None = None
     compilation_model: str | None = None
     query_model: str | None = None
+    reasoning_effort: str | None = None
+    indexing_reasoning_effort: str | None = None
+    compilation_reasoning_effort: str | None = None
+    query_reasoning_effort: str | None = None
     language: str
     pageindex_threshold: int
     # Effective entity-type vocabulary (cleaned; always includes "other").

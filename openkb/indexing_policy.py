@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import math
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
 from litellm.exceptions import Timeout
+
+_reasoning = importlib.import_module("openkb.reasoning" if __package__ else "reasoning")
+_fallback_log = _reasoning._fallback_log
+reasoning_fallback_allowed = _reasoning.reasoning_fallback_allowed
 
 
 class FlashAbort(BaseException):
@@ -60,10 +65,22 @@ def retry_delay(error, attempt: int, backoff: float = 2) -> float:
 
 
 async def bounded_completion(
-    completion, model, messages, sent, *, sleep=asyncio.sleep, timeout=120, retries=2, backoff=2
+    completion,
+    model,
+    messages,
+    sent,
+    *,
+    sleep=asyncio.sleep,
+    timeout=120,
+    retries=2,
+    backoff=2,
+    on_reasoning_fallback=None,
 ):
     """Bounded attempts for a single request, never an entire document."""
-    for attempt in range(retries + 1):
+    sent = dict(sent)
+    attempt = 0
+    fallback_used = False
+    while attempt <= retries:
         try:
             return await completion(
                 **{
@@ -75,6 +92,15 @@ async def bounded_completion(
                 }
             )
         except Exception as error:
+            if not fallback_used and reasoning_fallback_allowed(
+                error, model, sent.get("reasoning_effort"), stream=sent.get("stream", False)
+            ):
+                fallback_used = True
+                sent["reasoning_effort"] = "low"
+                _fallback_log()
+                if on_reasoning_fallback is not None:
+                    on_reasoning_fallback("none", "low")
+                continue
             if quota_error(error):
                 raise FlashAbort("Flash indexing stopped: quota exhausted") from None
             status = getattr(error, "status_code", None)
@@ -88,3 +114,4 @@ async def bounded_completion(
             if not transient or attempt == retries:
                 raise FlashAbort("Flash LLM request failed; no document retry") from None
             await sleep(retry_delay(error, attempt, backoff))
+            attempt += 1

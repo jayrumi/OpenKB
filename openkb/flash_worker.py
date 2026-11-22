@@ -21,6 +21,8 @@ from pathlib import Path
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 _policy = importlib.import_module("openkb.indexing_policy" if __package__ else "indexing_policy")
+_structure = importlib.import_module("openkb.flash_structure" if __package__ else "flash_structure")
+_reasoning = importlib.import_module("openkb.reasoning" if __package__ else "reasoning")
 FlashAbort = _policy.FlashAbort
 bounded_completion = _policy.bounded_completion
 quota_error = _policy.quota_error
@@ -40,7 +42,18 @@ def completion_policy(request):
     tokens = 0
     stopped = None
     diagnostics = {"calls": 0, "retries": 0}
+    if request.get("summary_reasoning_effort") is not None:
+        diagnostics.update(
+            requested_reasoning_effort=request["summary_reasoning_effort"],
+            effective_reasoning_effort=request["summary_reasoning_effort"],
+            reasoning_fallbacks=0,
+        )
     active = set()
+
+    def reasoning_fallback(requested, effective):
+        diagnostics.setdefault("requested_reasoning_effort", requested)
+        diagnostics["effective_reasoning_effort"] = effective
+        diagnostics["reasoning_fallbacks"] = diagnostics.get("reasoning_fallbacks", 0) + 1
 
     async def tracked(*, _retry=False, **kwargs):
         nonlocal calls, tokens
@@ -68,6 +81,9 @@ def completion_policy(request):
         task = asyncio.current_task()
         active.add(task)
         attempts = 0
+        sent = _reasoning.reasoning_request_kwargs(
+            model, request.get("summary_reasoning_effort"), sent
+        )
 
         async def leaf(**kwargs):
             nonlocal attempts
@@ -84,6 +100,7 @@ def completion_policy(request):
                 timeout=request.get("request_timeout", 120),
                 retries=request.get("retries", 2),
                 backoff=request.get("backoff", 2),
+                on_reasoning_fallback=reasoning_fallback,
             )
             utils._add_usage(response)
             return response.choices[0].message.content
@@ -124,6 +141,7 @@ def execute(request, *, client_factory=None):
         for model in (request["model"], request.get("summary_model", request["model"]))
     ):
         raise ValueError("This backend bypasses bounded LiteLLM policy")
+    injected_client = client_factory is not None
     if client_factory is None:
         from pageindex import PageIndexClient
 
@@ -136,8 +154,19 @@ def execute(request, *, client_factory=None):
             storage_path=storage,
             summary_concurrency=request.get("summary_concurrency", 1),
             optimize="off",
+            **(
+                {"summary_reasoning_effort": request["summary_reasoning_effort"]}
+                if request.get("summary_reasoning_effort") is not None
+                else {}
+            ),
         )
-        submitted = client.submit_document(request["pdf_path"], mode="flash")
+        # Fake clients do not implement the vendor layout pipeline. Real workers
+        # repair its layout before the SDK generates any model summaries.
+        structure_policy = (
+            contextlib.nullcontext() if injected_client else _structure.flash_structure_policy()
+        )
+        with structure_policy:
+            submitted = client.submit_document(request["pdf_path"], mode="flash")
         doc_id = submitted["doc_id"]
         metadata = client.get_document(doc_id)
         if metadata.get("status") != "completed":

@@ -36,8 +36,20 @@ from openkb.config import (
     get_timeout,
     resolve_entity_types,
 )
+from openkb.grounding import (
+    SOURCE_CONTRACT,
+    audit_candidates,
+    audit_messages,
+    load_source_pages,
+    source_context,
+)
 from openkb.lint import list_existing_wiki_targets, strip_ghost_wikilinks
 from openkb.locks import atomic_write_text
+from openkb.reasoning import (
+    acall_with_reasoning_fallback,
+    call_with_reasoning_fallback,
+    stage_reasoning_kwargs,
+)
 from openkb.schema import INDEX_SEED, get_agents_md
 
 logger = logging.getLogger(__name__)
@@ -88,8 +100,8 @@ _ENTITY_TYPES = frozenset(_ENTITY_TYPE_LIST)
 
 
 _CONCEPTS_PLAN_USER = """\
-Based on the summary above, decide how to update the wiki's CONCEPT pages and
-ENTITY pages.
+Using the original source pages as authority (the summary above is navigation,
+not evidence), decide how to update the wiki's CONCEPT pages and ENTITY pages.
 
 A CONCEPT is an abstract, recurring idea/pattern/mechanism (e.g. "agentic
 systems"). An ENTITY is a specific named thing — a person, organization,
@@ -423,13 +435,19 @@ def _llm_call(
         kwargs.setdefault("base_url", bundle.base_url)
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
-        logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
+        logger.debug("LLM kwarg names [%s]: %s", step_name, sorted(kwargs))
 
     spinner = _Spinner(step_name)
     spinner.start()
     t0 = time.time()
 
-    response = litellm.completion(model=model, messages=messages, **kwargs)
+    response = call_with_reasoning_fallback(
+        litellm.completion,
+        model=model,
+        messages=messages,
+        reasoning_effort=getattr(bundle, "reasoning_effort", None),
+        **kwargs,
+    )
     content = response.choices[0].message.content or ""
     truncated = _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
 
@@ -470,11 +488,17 @@ async def _llm_call_async(
         kwargs.setdefault("base_url", bundle.base_url)
     logger.debug("LLM request [%s]:\n%s", step_name, _fmt_messages(messages))
     if kwargs:
-        logger.debug("LLM kwargs [%s]: %s", step_name, kwargs)
+        logger.debug("LLM kwarg names [%s]: %s", step_name, sorted(kwargs))
 
     t0 = time.time()
 
-    response = await litellm.acompletion(model=model, messages=messages, **kwargs)
+    response = await acall_with_reasoning_fallback(
+        litellm.acompletion,
+        model=model,
+        messages=messages,
+        reasoning_effort=getattr(bundle, "reasoning_effort", None),
+        **kwargs,
+    )
     content = response.choices[0].message.content or ""
     truncated = _warn_if_truncated(response, step_name, kwargs.get("max_tokens"))
 
@@ -1602,6 +1626,7 @@ async def _compile_concepts(
     rewrite_summary: bool = False,
     entity_types: list[str] | None = None,
     bundle=None,
+    source_pages: dict[int, str] | None = None,
 ) -> None:
     """Shared Steps 2-4: concepts plan → generate/update → index.
 
@@ -1613,6 +1638,9 @@ async def _compile_concepts(
     wikilinks reflect the actual concept pages on disk.
     """
     source_file = f"summaries/{doc_name}.md"
+    summary_prefix = doc_brief + "\n"
+    if source_pages is None:
+        source_pages = load_source_pages(wiki_dir, doc_name)
 
     # Effective entity types for this compile (config-driven; defaults to the
     # canonical enum when unset, keeping behavior byte-identical to today).
@@ -1648,7 +1676,7 @@ async def _compile_concepts(
         bundle=bundle,
     )
 
-    def _write_v1_summary_stripped() -> None:
+    async def _write_v1_summary_stripped() -> None:
         """Fallback writer for the v1 summary on early-return paths.
 
         Strips against the set of wikilink targets currently on disk before
@@ -1667,7 +1695,24 @@ async def _compile_concepts(
                 doc_name,
                 ghosts[:5],
             )
-        _write_summary(wiki_dir, doc_name, cleaned, description=doc_brief)
+        original_summary = summary
+        if not rewrite_summary and (wiki_dir / source_file).exists():
+            original_summary = (wiki_dir / source_file).read_text(encoding="utf-8")
+        candidates = {
+            f"summaries/{doc_name}": summary_prefix
+            + (cleaned if rewrite_summary else original_summary)
+        }
+        await audit_candidates(source_pages, candidates, model, _llm_call_async,
+                               bundle=bundle, doc_name=doc_name)
+        candidates[f"summaries/{doc_name}"] = candidates[f"summaries/{doc_name}"].removeprefix(
+            summary_prefix
+        )
+        if rewrite_summary:
+            _write_summary(
+                wiki_dir, doc_name, candidates[f"summaries/{doc_name}"], description=doc_brief
+            )
+        elif candidates[f"summaries/{doc_name}"] != original_summary:
+            atomic_write_text(wiki_dir / source_file, candidates[f"summaries/{doc_name}"])
 
     try:
         parsed = _parse_json(plan_raw)
@@ -1684,8 +1729,7 @@ async def _compile_concepts(
             f"no concept pages generated. See log (stderr) for details.\n"
         )
         sys.stdout.flush()
-        if rewrite_summary:
-            _write_v1_summary_stripped()
+        await _write_v1_summary_stripped()
         _update_index(wiki_dir, doc_name, [], doc_brief=doc_brief, doc_type=doc_type)
         return
 
@@ -1704,8 +1748,7 @@ async def _compile_concepts(
             type(parsed).__name__,
             doc_name,
         )
-        if rewrite_summary:
-            _write_v1_summary_stripped()
+        await _write_v1_summary_stripped()
         _update_index(wiki_dir, doc_name, [], doc_brief=doc_brief, doc_type=doc_type)
         return
 
@@ -1786,8 +1829,7 @@ async def _compile_concepts(
         and not entity_update
         and not entity_related
     ):
-        if rewrite_summary:
-            _write_v1_summary_stripped()
+        await _write_v1_summary_stripped()
         _update_index(wiki_dir, doc_name, [], doc_brief=doc_brief, doc_type=doc_type)
         return
 
@@ -1808,6 +1850,23 @@ async def _compile_concepts(
         | {f"summaries/{doc_name}"}
     )
     known_targets_str = _format_known_targets(known_targets)
+
+    # Check exact baselines and all target IDs before costly candidate calls.
+    previous_versions: dict[str, str] = {}
+    planned_candidates = {f"summaries/{doc_name}": summary_prefix + summary}
+    for folder, items in (("concepts", create_items + update_items),
+                          ("entities", entity_create + entity_update)):
+        for item in items:
+            key = f"{folder}/{_sanitize_concept_name(item['name'])}"
+            planned_candidates[key] = item.get("title", item["name"])
+            path = wiki_dir / f"{key}.md"
+            if path.exists():
+                previous_versions[key] = path.read_text(encoding="utf-8")
+    audit_messages(source_pages, planned_candidates, doc_name=doc_name,
+                   previous_versions=previous_versions)
+
+    def _target_evidence(name, title):
+        return source_context(source_pages, name + " " + title, doc_name=doc_name)
 
     # Third cache breakpoint: the whitelist of valid wikilink targets. By
     # carrying this list in its own cached user message — placed between
@@ -1847,7 +1906,7 @@ async def _compile_concepts(
                             title=title,
                             doc_name=doc_name,
                             update_instruction="",
-                        ),
+                        ) + _target_evidence(name, title),
                     },
                 ],
                 f"concept: {name}",
@@ -1864,8 +1923,8 @@ async def _compile_concepts(
         concept_path = wiki_dir / "concepts" / f"{_sanitize_concept_name(name)}.md"
         if concept_path.exists():
             raw_text = concept_path.read_text(encoding="utf-8")
-            ex_parts = frontmatter.split(raw_text)
-            existing_content = ex_parts[1].strip() if ex_parts is not None else raw_text
+            previous_versions[f"concepts/{_sanitize_concept_name(name)}"] = raw_text
+            existing_content = raw_text
         else:
             existing_content = "(page not found — create from scratch)"
         async with semaphore:
@@ -1882,7 +1941,7 @@ async def _compile_concepts(
                             title=title,
                             doc_name=doc_name,
                             existing_content=existing_content,
-                        ),
+                        ) + _target_evidence(name, title),
                     },
                 ],
                 f"update: {name}",
@@ -1911,7 +1970,7 @@ async def _compile_concepts(
                             title=title,
                             type=etype,
                             doc_name=doc_name,
-                        ).replace("__ENTITY_TYPES__", types_str),
+                        ).replace("__ENTITY_TYPES__", types_str) + _target_evidence(name, title),
                     },
                 ],
                 f"entity: {name}",
@@ -1930,8 +1989,8 @@ async def _compile_concepts(
         epath = wiki_dir / "entities" / f"{_sanitize_concept_name(name)}.md"
         if epath.exists():
             raw_text = epath.read_text(encoding="utf-8")
-            ex_parts = frontmatter.split(raw_text)
-            existing_content = ex_parts[1].strip() if ex_parts is not None else raw_text
+            previous_versions[f"entities/{_sanitize_concept_name(name)}"] = raw_text
+            existing_content = raw_text
         else:
             existing_content = "(page not found — create from scratch)"
         async with semaphore:
@@ -1949,7 +2008,7 @@ async def _compile_concepts(
                             type=etype,
                             doc_name=doc_name,
                             existing_content=existing_content,
-                        ).replace("__ENTITY_TYPES__", types_str),
+                        ).replace("__ENTITY_TYPES__", types_str) + _target_evidence(name, title),
                     },
                 ],
                 f"entity-update: {name}",
@@ -2038,21 +2097,18 @@ async def _compile_concepts(
         assert not isinstance(result, BaseException)  # validated before any writes
         entity_pending.append(result)
 
-    # Strip ghost wikilinks from entity bodies and write each page.
-    for name, page_content, brief, etype in entity_pending:
-        cleaned, ghosts = strip_ghost_wikilinks(page_content, known_targets)
-        if ghosts:
-            logger.info(
-                "stripped %d ghost wikilink(s) from entity %s: %s",
-                len(ghosts),
-                name,
-                ghosts[:5],
-            )
-        safe = _sanitize_concept_name(name)
-        is_update = (wiki_dir / "entities" / f"{safe}.md").exists()
-        _write_entity(wiki_dir, name, cleaned, source_file, is_update, brief=brief, type_=etype)
-        entity_names.append(safe)
-        entity_meta[safe] = (etype, brief)
+    # Entity publication is deferred until the complete attribution batch passes.
+    def _publish_entities():
+        # Strip ghost wikilinks from entity bodies and write each page.
+        for name, page_content, brief, etype in entity_pending:
+            cleaned, ghosts = strip_ghost_wikilinks(page_content, known_targets)
+            if ghosts:
+                logger.info("stripped %d ghost wikilink(s) from entity %s", len(ghosts), name)
+            safe = _sanitize_concept_name(name)
+            is_update = (wiki_dir / "entities" / f"{safe}.md").exists()
+            _write_entity(wiki_dir, name, cleaned, source_file, is_update, brief=brief, type_=etype)
+            entity_names.append(safe)
+            entity_meta[safe] = (etype, brief)
 
     # Strip unresolved wikilinks from concept bodies before writing. The
     # whitelist includes existing files + this round's planned slugs +
@@ -2067,6 +2123,10 @@ async def _compile_concepts(
                 ghosts[:5],
             )
         pending_writes[i] = (name, cleaned, is_update, brief)
+
+    final_summary = summary
+    if not rewrite_summary and (wiki_dir / source_file).exists():
+        final_summary = (wiki_dir / source_file).read_text(encoding="utf-8")
 
     # --- Optional Step 3a: LLM rewrite the summary with full whitelist ---
     # Only for the short-doc path. The long-doc path leaves the indexer-
@@ -2137,7 +2197,33 @@ async def _compile_concepts(
                     doc_name,
                     fallback_ghosts[:5],
                 )
-        _write_summary(wiki_dir, doc_name, final_summary, description=doc_brief)
+    candidates = {f"summaries/{doc_name}": summary_prefix + final_summary}
+    candidates.update(
+        {f"concepts/{_sanitize_concept_name(n)}": b + "\n" + c for n, c, _, b in pending_writes}
+    )
+    candidates.update(
+        {f"entities/{_sanitize_concept_name(n)}": b + "\n" + c for n, c, b, _ in entity_pending}
+    )
+    await audit_candidates(source_pages, candidates, model, _llm_call_async,
+                           bundle=bundle, doc_name=doc_name, previous_versions=previous_versions)
+    candidates[f"summaries/{doc_name}"] = candidates[f"summaries/{doc_name}"].removeprefix(
+        summary_prefix
+    )
+    pending_writes = [
+        (n, candidates[f"concepts/{_sanitize_concept_name(n)}"].removeprefix(b + "\n"), u, b)
+        for n, c, u, b in pending_writes
+    ]
+    entity_pending = [
+        (n, candidates[f"entities/{_sanitize_concept_name(n)}"].removeprefix(b + "\n"), b, t)
+        for n, c, b, t in entity_pending
+    ]
+    _publish_entities()
+    if rewrite_summary:
+        _write_summary(
+            wiki_dir, doc_name, candidates[f"summaries/{doc_name}"], description=doc_brief
+        )
+    elif candidates[f"summaries/{doc_name}"] != final_summary:
+        atomic_write_text(wiki_dir / source_file, candidates[f"summaries/{doc_name}"])
 
     # --- Write concept pages to disk ---
     for name, page_content, is_update, brief in pending_writes:
@@ -2207,10 +2293,13 @@ async def compile_short_doc(
     config = resolve_effective_config(kb_dir)[0]
     language: str = config.get("language", "en")
     entity_types = resolve_entity_types(config)
+    bundle = stage_reasoning_kwargs(config, "compilation", bundle).get("bundle", bundle)
 
     wiki_dir = kb_dir / "wiki"
     schema_md = get_agents_md(wiki_dir)
     content = source_path.read_text(encoding="utf-8")
+    pages = load_source_pages(wiki_dir, doc_name, content)
+    content = source_context(pages, doc_name, doc_name=doc_name)
 
     # Base context A: system + document. cache_control marker on the doc
     # message creates a cache breakpoint that covers (system + doc) for
@@ -2220,7 +2309,8 @@ async def compile_short_doc(
         "content": _SYSTEM_TEMPLATE.format(
             schema_md=schema_md,
             language=language,
-        ),
+        )
+        + SOURCE_CONTRACT,
     }
     doc_msg = {
         "role": "user",
@@ -2268,6 +2358,7 @@ async def compile_short_doc(
         rewrite_summary=True,
         entity_types=entity_types,
         bundle=bundle,
+        source_pages=pages,
     )
 
 
@@ -2291,10 +2382,12 @@ async def compile_long_doc(
     config = resolve_effective_config(kb_dir)[0]
     language: str = config.get("language", "en")
     entity_types = resolve_entity_types(config)
+    bundle = stage_reasoning_kwargs(config, "compilation", bundle).get("bundle", bundle)
 
     wiki_dir = kb_dir / "wiki"
     schema_md = get_agents_md(wiki_dir)
     summary_content = summary_path.read_text(encoding="utf-8")
+    pages = load_source_pages(wiki_dir, doc_name)
 
     # Backfill OKF fields on the indexer-written summary. Idempotent: set
     # description before type so that when both keys are missing the prepends
@@ -2308,7 +2401,7 @@ async def compile_long_doc(
         updated = fm_block + body
         if updated != summary_content:
             summary_content = updated
-            atomic_write_text(summary_path, summary_content)
+            # Metadata publication is deferred until compilation succeeds.
 
     # Base context A. cache_control marker on the doc message creates a
     # cache breakpoint covering (system + doc) for every concept call.
@@ -2317,7 +2410,8 @@ async def compile_long_doc(
         "content": _SYSTEM_TEMPLATE.format(
             schema_md=schema_md,
             language=language,
-        ),
+        )
+        + SOURCE_CONTRACT,
     }
     doc_msg = {
         "role": "user",
@@ -2325,7 +2419,8 @@ async def compile_long_doc(
             _LONG_DOC_SUMMARY_USER.format(
                 doc_name=doc_name,
                 doc_id=doc_id,
-                content=summary_content,
+                content=summary_content + source_context(pages, doc_name + " " + summary_content,
+                                                         doc_name=doc_name),
             )
         ),
     }
@@ -2348,4 +2443,15 @@ async def compile_long_doc(
         doc_type="pageindex",
         entity_types=entity_types,
         bundle=bundle,
+        source_pages=pages,
     )
+    # Read the successful result so backlinks and audit citations are preserved.
+    latest = summary_path.read_text(encoding="utf-8")
+    parts = frontmatter.split(latest)
+    if parts is not None:
+        block, body = parts
+        if doc_description:
+            block = _set_fm_line(block, "description", doc_description)
+        block = _set_fm_line(block, "type", "Summary")
+        if block + body != latest:
+            atomic_write_text(summary_path, block + body)

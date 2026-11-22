@@ -50,6 +50,7 @@ from dotenv import load_dotenv
 
 from openkb.agent.compiler import DEFAULT_COMPILE_CONCURRENCY, compile_long_doc
 from openkb.stage_config import resolve_stage_model
+from openkb.reasoning import stage_reasoning_kwargs
 from openkb.llm_lifecycle import run_owned_llm_loop
 from openkb.config import (
     DEFAULT_CONFIG,
@@ -437,6 +438,16 @@ def _run_compile_with_retry(coro_factory, label: str) -> None:
             run_owned_llm_loop(coro_factory())
             return
         except Exception as exc:
+            from openkb.grounding import GroundingError
+
+            cause: BaseException | None = exc
+            seen: set[int] = set()
+            while cause is not None and id(cause) not in seen:
+                seen.add(id(cause))
+                if isinstance(cause, GroundingError):
+                    click.echo("  [ERROR] Source attribution requires review; compilation not retried.")
+                    raise
+                cause = cause.__cause__ or cause.__context__
             if attempt == 0:
                 click.echo("  Retrying compilation in 2s...")
                 time.sleep(2)
@@ -2489,7 +2500,14 @@ async def run_lint(kb_dir: Path) -> Path | None:
 
         click.echo("Running knowledge lint...")
         try:
-            knowledge_report = await run_knowledge_lint(kb_dir, model)
+            reasoning_kwargs = stage_reasoning_kwargs(config, "compilation")
+            if reasoning_kwargs:
+                from openkb.agent.query import build_run_config_from_bundle
+
+                reasoning_kwargs["run_config"] = build_run_config_from_bundle(
+                    model, reasoning_kwargs["bundle"]
+                )
+            knowledge_report = await run_knowledge_lint(kb_dir, model, **reasoning_kwargs)
         except Exception as exc:
             knowledge_report = f"Knowledge lint failed: {exc}"
         click.echo(knowledge_report)
@@ -2983,6 +3001,7 @@ def skill_new(ctx, name, intent, yes_flag):
         intent=intent,
         kb_dir=kb_dir,
         model=model,
+        **stage_reasoning_kwargs(config, "compilation"),
     )
     try:
         asyncio.run(gen.run())
@@ -3471,6 +3490,7 @@ def deck_new(ctx, name, intent, yes_flag, critique_flag, skill_name):
         model=model,
         critique=critique_flag,
         skill_name=skill_name,
+        **stage_reasoning_kwargs(config, "compilation"),
     )
     try:
         asyncio.run(gen.run())
@@ -3778,6 +3798,7 @@ async def run_lint_report(
     if bundle is None:
         _setup_llm_key(kb_dir)
     model: str = resolve_stage_model(config, "compilation")
+    bundle = stage_reasoning_kwargs(config, "compilation", bundle).get("bundle", bundle)
     run_config = build_run_config_from_bundle(model, bundle)
 
     if echo:

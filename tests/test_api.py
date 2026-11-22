@@ -2532,6 +2532,10 @@ def test_global_config_get_defaults_when_absent(monkeypatch, tmp_path):
         "indexing_model": None,
         "compilation_model": None,
         "query_model": None,
+        "reasoning_effort": None,
+        "indexing_reasoning_effort": None,
+        "compilation_reasoning_effort": None,
+        "query_reasoning_effort": None,
         "language": "en",
         "pageindex_threshold": 20,
         # Default entity-type vocabulary when global.yaml sets none.

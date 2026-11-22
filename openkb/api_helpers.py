@@ -48,7 +48,8 @@ from openkb.config import (
     resolve_kb_alias,
 )
 from openkb.log import append_log
-from openkb.stage_config import resolve_stage_model
+from openkb.reasoning import with_reasoning_effort
+from openkb.stage_config import resolve_stage_model, resolve_stage_reasoning
 from openkb.watch_service import WatchRegistry
 
 security = HTTPBearer(auto_error=False)
@@ -423,6 +424,10 @@ async def _stream_query(
     run_config = build_run_config_from_bundle(model, bundle)
     try:
         config = resolve_effective_config(kb_dir)[0]
+        from openkb.reasoning import with_reasoning_effort
+        from openkb.stage_config import resolve_stage_reasoning
+
+        bundle = with_reasoning_effort(bundle, resolve_stage_reasoning(config, "query"))
         language = config.get("language", "en")
         agent = build_query_agent(str(kb_dir / "wiki"), model, language=language, bundle=bundle)
         final_answer = ""
@@ -621,7 +626,7 @@ async def _iter_deck(
         intent=request.intent,
         kb_dir=kb_dir,
         model=model,
-        bundle=bundle,
+        bundle=with_reasoning_effort(bundle, resolve_stage_reasoning(config, "compilation")),
     )
     try:
         await gen.run()
@@ -683,7 +688,7 @@ async def _iter_skill(
         intent=request.intent,
         kb_dir=kb_dir,
         model=model,
-        bundle=bundle,
+        bundle=with_reasoning_effort(bundle, resolve_stage_reasoning(config, "compilation")),
     )
     try:
         await gen.run()

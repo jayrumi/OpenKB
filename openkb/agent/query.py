@@ -19,6 +19,88 @@ from openkb.schema import get_agents_md
 
 MAX_TURNS = 50
 
+
+def _query_model(model: str, effort: str | None, bundle: LlmCredentialBundle | None = None):
+    """Scope compatibility to a model request, never an agent/tool run.
+
+    Leave the default string/provider resolution unchanged unless explicitly
+    opting into ChatGPT's none -> low compatibility policy.
+    """
+    from agents.extensions.models.litellm_model import LitellmModel
+
+    if effort != "none" or not model.startswith("chatgpt/"):
+        if bundle is None:
+            return f"litellm/{model}"
+        return LitellmModel(model=model, base_url=bundle.base_url, api_key=bundle.api_key)
+
+    class RequestReasoningModel(LitellmModel):
+        async def get_response(
+            self,
+            system_instructions,
+            input,
+            model_settings,
+            tools,
+            output_schema,
+            handoffs,
+            tracing,
+            previous_response_id=None,
+            conversation_id=None,
+            prompt=None,
+        ):
+            from dataclasses import replace
+
+            from openai.types.shared import Reasoning
+
+            from openkb.reasoning import acall_with_reasoning_fallback
+
+            parent_response = super().get_response
+
+            async def request(*, model, messages, reasoning_effort=None, **kwargs):
+                # Copies are local to this attempt; subsequent turns still ask
+                # for the configured effort, even after a successful fallback.
+                settings = model_settings
+                if reasoning_effort is not None:
+                    reasoning = (
+                        settings.reasoning.model_copy(update={"effort": reasoning_effort})
+                        if settings.reasoning is not None
+                        else Reasoning(effort=reasoning_effort)
+                    )
+                    extra = dict(settings.extra_args or {})
+                    extra["allowed_openai_params"] = kwargs["allowed_openai_params"]
+                    settings = replace(settings, reasoning=reasoning, extra_args=extra)
+                return await parent_response(
+                    system_instructions,
+                    messages,
+                    settings,
+                    tools,
+                    output_schema,
+                    handoffs,
+                    tracing,
+                    previous_response_id=previous_response_id,
+                    conversation_id=conversation_id,
+                    prompt=prompt,
+                )
+
+            return await acall_with_reasoning_fallback(
+                request,
+                model=self.model,
+                messages=input,
+                reasoning_effort=self._get_reasoning_effort(model_settings),
+                allowed_openai_params=(model_settings.extra_args or {}).get(
+                    "allowed_openai_params", []
+                ),
+            )
+
+        # stream_response is deliberately inherited unchanged: even errors
+        # before the first event must not retry or replay previous tools.
+
+    return RequestReasoningModel(
+        model=model,
+        base_url=bundle.base_url if bundle else None,
+        api_key=bundle.api_key if bundle else None,
+    )
+
+
 _QUERY_INSTRUCTIONS_TEMPLATE = """\
 You are OpenKB, a knowledge-base Q&A agent. You answer questions by searching the wiki.
 
@@ -58,8 +140,9 @@ def build_query_agent(
     model: str,
     language: str = "en",
     bundle: "LlmCredentialBundle | None" = None,
+    reasoning_effort: str | None = None,
 ) -> Agent:
-    """Build and return the Q&A agent."""
+    """Build the Q&A agent, preserving legacy runtime settings when no bundle."""
     if model.startswith("chatgpt/"):
         from openkb.provider_compat import install_response_compat
 
@@ -107,6 +190,7 @@ def build_query_agent(
 
     from agents.model_settings import ModelSettings
 
+    model_settings: dict[str, Any]
     if bundle is not None:
         model_settings = {
             "parallel_tool_calls": (
@@ -118,11 +202,25 @@ def build_query_agent(
     else:
         model_settings = resolve_model_settings()
 
+    effort = (
+        bundle.reasoning_effort
+        if bundle and bundle.reasoning_effort is not None
+        else reasoning_effort
+    )
+    if effort is not None:
+        from openai.types.shared import Reasoning
+
+        model_settings["reasoning"] = Reasoning(effort=effort)
+        if model.startswith("chatgpt/"):
+            extra = dict(model_settings.get("extra_args") or {})
+            extra["allowed_openai_params"] = ["reasoning_effort"]
+            model_settings["extra_args"] = extra
+
     return Agent(
         name="wiki-query",
         instructions=instructions,
         tools=[read_file, get_page_content, get_image],
-        model=f"litellm/{model}",
+        model=_query_model(model, effort) if effort == "none" else f"litellm/{model}",
         model_settings=ModelSettings(**model_settings),
     )
 
@@ -235,7 +333,20 @@ def build_chat_agent(
     """
     wiki_root = str(kb_dir / "wiki")
     kb_root = str(kb_dir)
-    base = build_query_agent(wiki_root, model, language=language, bundle=bundle)
+    from openkb.config import resolve_effective_config
+    from openkb.reasoning import with_reasoning_effort
+    from openkb.stage_config import resolve_stage_reasoning
+
+    effort = resolve_stage_reasoning(resolve_effective_config(kb_dir)[0], "query")
+    if bundle is not None:
+        bundle = with_reasoning_effort(bundle, effort)
+    base = build_query_agent(
+        wiki_root,
+        model,
+        language=language,
+        bundle=bundle,
+        **({"reasoning_effort": effort} if effort is not None else {}),
+    )
 
     @function_tool
     def write_file(path: str, content: str) -> str:
@@ -388,7 +499,19 @@ async def run_query(
 
     wiki_root = str(kb_dir / "wiki")
 
-    agent = build_query_agent(wiki_root, model, language=language, bundle=bundle)
+    from openkb.reasoning import with_reasoning_effort
+    from openkb.stage_config import resolve_stage_reasoning
+
+    effort = resolve_stage_reasoning(config, "query")
+    if bundle is not None:
+        bundle = with_reasoning_effort(bundle, effort)
+    agent = build_query_agent(
+        wiki_root,
+        model,
+        language=language,
+        bundle=bundle,
+        **({"reasoning_effort": effort} if effort is not None else {}),
+    )
 
     if not stream:
         result = (
@@ -513,11 +636,19 @@ def build_run_config_from_bundle(model: str, bundle: "LlmCredentialBundle | None
     if bundle is None:
         return None
     from agents import RunConfig
-    from agents.extensions.models.litellm_model import LitellmModel
 
-    litellm_model = LitellmModel(
-        model=model,
-        base_url=bundle.base_url,
-        api_key=bundle.api_key,
-    )
+    litellm_model = _query_model(model, bundle.reasoning_effort, bundle)
+    if bundle.reasoning_effort is not None:
+        from agents.model_settings import ModelSettings
+        from openai.types.shared import Reasoning
+
+        return RunConfig(
+            model=litellm_model,
+            model_settings=ModelSettings(
+                reasoning=Reasoning(effort=bundle.reasoning_effort),
+                extra_args={"allowed_openai_params": ["reasoning_effort"]}
+                if model.startswith("chatgpt/")
+                else None,
+            ),
+        )
     return RunConfig(model=litellm_model)

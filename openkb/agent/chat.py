@@ -31,6 +31,7 @@ from openkb.agent.query import (
 )
 from openkb.config import LlmCredentialBundle
 from openkb.log import append_log
+from openkb.reasoning import stage_reasoning_kwargs
 
 _STYLE_DICT: dict[str, str] = {
     "prompt": "bold #5fa0e0",
@@ -585,6 +586,7 @@ async def _handle_slash_skill(arg: str, kb_dir: Path, style: Style) -> None:
         intent=intent,
         kb_dir=kb_dir,
         model=model,
+        **stage_reasoning_kwargs(config, "compilation"),
     )
     try:
         await gen.run()
@@ -724,6 +726,7 @@ async def _handle_slash_deck(arg: str, kb_dir: Path, style: Style) -> None:
         model=model,
         critique=critique,
         skill_name=skill_name,
+        **stage_reasoning_kwargs(config, "compilation"),
     )
     try:
         await gen.run()
@@ -896,6 +899,7 @@ async def _handle_slash_critique(arg: str, kb_dir: Path, style: Style) -> None:
             kb_dir=kb_dir,
             model=model,
             max_turns=40,
+            **stage_reasoning_kwargs(config, "compilation"),
         )
     except SkillNotFoundError as exc:
         _fmt(style, ("class:error", f"[ERROR] {exc}\n"))

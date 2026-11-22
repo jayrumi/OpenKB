@@ -408,6 +408,7 @@ class LlmCredentialBundle:
     timeout: float | None = None
     parallel_tool_calls: bool | None = None
     parallel_tool_calls_explicit: bool = False
+    reasoning_effort: str | None = None
 
 
 def resolve_credential_bundle(kb_dir: Path) -> LlmCredentialBundle:
@@ -503,6 +504,10 @@ GLOBAL_SCALAR_KEYS: tuple[str, ...] = (
     "indexing_model",
     "compilation_model",
     "query_model",
+    "reasoning_effort",
+    "indexing_reasoning_effort",
+    "compilation_reasoning_effort",
+    "query_reasoning_effort",
     "language",
     "pageindex_threshold",
     "entity_types",
