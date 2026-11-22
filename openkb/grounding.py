@@ -13,6 +13,8 @@ from pathlib import Path
 
 MAX_AUDIT_CHARS = 100_000
 MAX_EVIDENCE_CHARS = 12_000
+MAX_COMPLETE_AUDIT_PAGES = 32
+MAX_COMPLETE_AUDIT_SOURCE_CHARS = 32_000
 WINDOW_CHARS = 1800
 SOURCE_CONTRACT = """
 SOURCE-FIRST CONTRACT: Original source pages are authoritative; generated summaries
@@ -164,8 +166,12 @@ per candidate: {"targets":[{"target":"exact candidate key",
 Use supported only if ALL new source-specific attributions are supported; supply
 at least one original-page quote for supported. Unsupported/unclear blocks
 publication; do not rewrite. Page numbers are physical source-page IDs.
-Supplied evidence is selected original-page windows, NOT the entire PDF.
-Lexical overlap is NOT semantic support. Use only selected candidate_pages;
+The evidence_scope declares the available original evidence:
+complete_original_document_shared_once means source_pages contains every original
+page, once; candidate_pages maps each target to its allowed page-key references.
+Otherwise candidate_pages maps each target to exact selected original-page
+windows; do not assume complete coverage. The shared union grants no extra scope.
+Lexical overlap is NOT semantic support. Use only the target's allowed evidence;
 insufficient context, missing support or ambiguity means unclear/manual review.
 """
     body = {
@@ -176,6 +182,27 @@ insufficient context, missing support or ambiguity means unclear/manual review.
         "candidates": targets,
         "previous_versions": previous_versions or {},
     }
+    complete_pages = (
+        {str(number): pages[number] for number in sorted(pages)}
+        if len(pages) <= MAX_COMPLETE_AUDIT_PAGES
+        and sum(map(len, pages.values())) <= MAX_COMPLETE_AUDIT_SOURCE_CHARS
+        else {}
+    )
+    if (
+        complete_pages
+        and len(json.dumps(complete_pages, ensure_ascii=False)) <= MAX_COMPLETE_AUDIT_SOURCE_CHARS
+    ):
+        # Small sources are affordable once, but duplicating them per target
+        # either wastes tokens or silently loses context to lexical selection.
+        body["evidence_scope"] = "complete_original_document_shared_once"
+        body["source_pages"] = complete_pages
+        body["candidate_pages"] = {target: list(complete_pages) for target in targets}
+        payload = json.dumps(body, ensure_ascii=False)
+        if len(payload) + len(instruction) > MAX_AUDIT_CHARS:
+            raise GroundingError(
+                "Grounding complete audit exceeds safe batch bound; manual review required"
+            )
+        return [{"role": "system", "content": instruction}, {"role": "user", "content": payload}]
     remaining = MAX_AUDIT_CHARS - len(instruction) - len(json.dumps(body, ensure_ascii=False))
     if remaining < 256 * max(1, len(targets)):
         raise GroundingError("Grounding audit exceeds safe batch bound; manual review required")
@@ -299,10 +326,15 @@ async def audit_candidates(
     # Validate against both the selected window and the exact raw PDF page.
     for result in json.loads(raw)["targets"]:
         for item in result["evidence"]:
-            if str(item["page"]) not in selected["candidate_pages"][result["target"]] or " ".join(
-                item["quote"].split()
-            ) not in " ".join(
-                selected["candidate_pages"][result["target"]].get(str(item["page"]), "").split()
+            page = str(item["page"])
+            allowed = selected["candidate_pages"][result["target"]]
+            windows = (
+                selected["source_pages"]
+                if selected["evidence_scope"] == "complete_original_document_shared_once"
+                else allowed
+            )
+            if page not in allowed or " ".join(item["quote"].split()) not in " ".join(
+                windows.get(page, "").split()
             ):
                 raise GroundingError(
                     "Grounding quote outside selected evidence; manual review required"
