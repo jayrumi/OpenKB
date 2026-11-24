@@ -2,7 +2,7 @@
 
 Enumeration detection is a conservative routing heuristic, never evidence of
 support. Only an explicit semantic model verdict with checked original-page
-quotes can clear a routed candidate. One bounded batch, no repair/retry loop.
+quotes can clear a routed candidate. Bounded batches, no model repair/retry loop.
 """
 
 from __future__ import annotations
@@ -31,6 +31,10 @@ or explicitly mark it unclear; never promote summary wording to source evidence.
 
 class GroundingError(RuntimeError):
     """Fail closed before publishing candidates needing manual source review."""
+
+
+class AuditSizeError(GroundingError):
+    """A local size bound only; splitting targets may make the request fit."""
 
 
 def load_source_pages(wiki_dir: Path, doc_name: str, fallback: str = "") -> dict[int, str]:
@@ -94,7 +98,7 @@ def select_source_pages(pages, query="", *, doc_name=None, max_chars=MAX_EVIDENC
             continue
         if used + len(text) + 80 > max_chars:
             if row in priority:
-                raise GroundingError(
+                raise AuditSizeError(
                     "Grounding cited evidence exceeds safe bound; manual review required"
                 )
             continue
@@ -199,13 +203,13 @@ insufficient context, missing support or ambiguity means unclear/manual review.
         body["candidate_pages"] = {target: list(complete_pages) for target in targets}
         payload = json.dumps(body, ensure_ascii=False)
         if len(payload) + len(instruction) > MAX_AUDIT_CHARS:
-            raise GroundingError(
+            raise AuditSizeError(
                 "Grounding complete audit exceeds safe batch bound; manual review required"
             )
         return [{"role": "system", "content": instruction}, {"role": "user", "content": payload}]
     remaining = MAX_AUDIT_CHARS - len(instruction) - len(json.dumps(body, ensure_ascii=False))
     if remaining < 256 * max(1, len(targets)):
-        raise GroundingError("Grounding audit exceeds safe batch bound; manual review required")
+        raise AuditSizeError("Grounding audit exceeds safe batch bound; manual review required")
     # Evidence is included per target and in the shared page index. Reserve for
     # both copies; the exact serialized-size check below remains fail closed
     # for unusual escaping. Never truncate candidate or baseline coverage.
@@ -226,8 +230,38 @@ insufficient context, missing support or ambiguity means unclear/manual review.
                 )
     payload = json.dumps(body, ensure_ascii=False)
     if len(payload) + len(instruction) > MAX_AUDIT_CHARS:
-        raise GroundingError("Grounding audit exceeds safe batch bound; manual review required")
+        raise AuditSizeError("Grounding audit exceeds safe batch bound; manual review required")
     return [{"role": "system", "content": instruction}, {"role": "user", "content": payload}]
+
+
+def plan_audit_batches(
+    pages, targets, *, doc_name=None, previous_versions=None
+) -> list[list[dict]]:
+    """Plan all requests locally, bisecting only size failures, never model verdicts.
+
+    Preserve insertion order, exact candidates/baselines and complete target
+    coverage. A single target that cannot fit still fails before any model call.
+    """
+    if not targets:
+        return []
+    baselines = {key: value for key, value in (previous_versions or {}).items() if key in targets}
+    try:
+        return [audit_messages(pages, targets, doc_name=doc_name, previous_versions=baselines)]
+    except AuditSizeError:
+        if len(targets) == 1:
+            raise
+    keys = list(targets)
+    midpoint = len(keys) // 2
+    return [
+        batch
+        for selected in (keys[:midpoint], keys[midpoint:])
+        for batch in plan_audit_batches(
+            pages,
+            {key: targets[key] for key in selected},
+            doc_name=doc_name,
+            previous_versions=baselines,
+        )
+    ]
 
 
 def validate_audit(
@@ -303,43 +337,49 @@ async def audit_candidates(
     if not targets:
         return
     previous_versions = {k: v for k, v in (previous_versions or {}).items() if k in targets}
-    messages = audit_messages(
+    batches = plan_audit_batches(
         pages, targets, doc_name=doc_name, previous_versions=previous_versions
     )
-    try:
-        raw = await call(
-            model,
-            messages,
-            "source-attribution-audit",
-            bundle=bundle,
-            response_format={"type": "json_object"},
-            raise_on_truncation=True,
-        )
-    except Exception as exc:
-        raise GroundingError(
-            "Grounding attribution audit unavailable; manual review required"
-        ) from exc
-    checked = validate_audit(
-        raw, targets, pages, doc_name=doc_name, previous_versions=previous_versions
-    )
-    selected = json.loads(messages[1]["content"])
-    # Validate against both the selected window and the exact raw PDF page.
-    for result in json.loads(raw)["targets"]:
-        for item in result["evidence"]:
-            page = str(item["page"])
-            allowed = selected["candidate_pages"][result["target"]]
-            windows = (
-                selected["source_pages"]
-                if selected["evidence_scope"] == "complete_original_document_shared_once"
-                else allowed
+    checked_all = {}
+    for messages in batches:
+        selected = json.loads(messages[1]["content"])
+        batch_targets = selected["candidates"]
+        batch_previous = selected["previous_versions"]
+        try:
+            raw = await call(
+                model,
+                messages,
+                "source-attribution-audit",
+                bundle=bundle,
+                response_format={"type": "json_object"},
+                raise_on_truncation=True,
             )
-            if page not in allowed or " ".join(item["quote"].split()) not in " ".join(
-                windows.get(page, "").split()
-            ):
-                raise GroundingError(
-                    "Grounding quote outside selected evidence; manual review required"
+        except Exception as exc:
+            raise GroundingError(
+                "Grounding attribution audit unavailable; manual review required"
+            ) from exc
+        checked = validate_audit(
+            raw, batch_targets, pages, doc_name=doc_name, previous_versions=batch_previous
+        )
+        # Validate against both the selected window and the exact raw PDF page.
+        for result in json.loads(raw)["targets"]:
+            for item in result["evidence"]:
+                page = str(item["page"])
+                allowed = selected["candidate_pages"][result["target"]]
+                windows = (
+                    selected["source_pages"]
+                    if selected["evidence_scope"] == "complete_original_document_shared_once"
+                    else allowed
                 )
-    for target, numbers in checked.items():
+                if page not in allowed or " ".join(item["quote"].split()) not in " ".join(
+                    windows.get(page, "").split()
+                ):
+                    raise GroundingError(
+                        "Grounding quote outside selected evidence; manual review required"
+                    )
+        checked_all.update(checked)
+    # Do not mutate even staged candidates until every required batch passes.
+    for target, numbers in checked_all.items():
         citations = " ".join(
             f"[source {doc_name} p. {n}]" if doc_name else f"[source p. {n}]" for n in numbers
         )

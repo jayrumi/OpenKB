@@ -39,8 +39,8 @@ from openkb.config import (
 from openkb.grounding import (
     SOURCE_CONTRACT,
     audit_candidates,
-    audit_messages,
     load_source_pages,
+    plan_audit_batches,
     source_context,
 )
 from openkb.lint import list_existing_wiki_targets, strip_ghost_wikilinks
@@ -1862,7 +1862,7 @@ async def _compile_concepts(
             path = wiki_dir / f"{key}.md"
             if path.exists():
                 previous_versions[key] = path.read_text(encoding="utf-8")
-    audit_messages(source_pages, planned_candidates, doc_name=doc_name,
+    plan_audit_batches(source_pages, planned_candidates, doc_name=doc_name,
                    previous_versions=previous_versions)
 
     def _target_evidence(name, title):
