@@ -11,6 +11,8 @@ import json
 import re
 from pathlib import Path
 
+from openkb.summary_audit import freeze_summary as freeze_summary
+
 MAX_AUDIT_CHARS = 100_000
 MAX_EVIDENCE_CHARS = 12_000
 MAX_COMPLETE_AUDIT_PAGES = 32
@@ -235,7 +237,7 @@ insufficient context, missing support or ambiguity means unclear/manual review.
 
 
 def plan_audit_batches(
-    pages, targets, *, doc_name=None, previous_versions=None
+    pages, targets, *, doc_name=None, previous_versions=None, summary_artifact=None
 ) -> list[list[dict]]:
     """Plan all requests locally, bisecting only size failures, never model verdicts.
 
@@ -249,6 +251,14 @@ def plan_audit_batches(
         return [audit_messages(pages, targets, doc_name=doc_name, previous_versions=baselines)]
     except AuditSizeError:
         if len(targets) == 1:
+            key = next(iter(targets))
+            if summary_artifact is not None and key == summary_artifact.parent:
+                if baselines.get(key):
+                    raise GroundingError(
+                        "Grounding oversized prior-version baseline cannot fragment"
+                    )
+                summary_artifact.verify(pages, targets)
+                return summary_artifact.plan(pages, doc_name=doc_name)
             raise
     keys = list(targets)
     midpoint = len(keys) // 2
@@ -260,6 +270,7 @@ def plan_audit_batches(
             {key: targets[key] for key in selected},
             doc_name=doc_name,
             previous_versions=baselines,
+            summary_artifact=summary_artifact,
         )
     ]
 
@@ -329,17 +340,55 @@ def validate_audit(
 
 
 async def audit_candidates(
-    pages, candidates, model, call, *, bundle=None, doc_name=None, previous_versions=None
+    pages,
+    candidates,
+    model,
+    call,
+    *,
+    bundle=None,
+    doc_name=None,
+    previous_versions=None,
+    summary_artifact=None,
 ):
+    frozen_candidates = dict(candidates)
+    frozen_pages = dict(pages)
+    live_previous = previous_versions if previous_versions is not None else {}
+    frozen_previous = dict(live_previous)
     if not pages and risky_targets({1: "\n\n".join(candidates.values())}, candidates):
         raise GroundingError("Grounding original source pages missing; manual review required")
     targets = risky_targets(pages, candidates)
+    if summary_artifact is not None:
+        # A verified oversized index is required in full, never a trusted baseline.
+        summary_artifact.verify(pages, candidates)
+        targets[summary_artifact.parent] = candidates[summary_artifact.parent]
     if not targets:
         return
     previous_versions = {k: v for k, v in (previous_versions or {}).items() if k in targets}
     batches = plan_audit_batches(
-        pages, targets, doc_name=doc_name, previous_versions=previous_versions
+        pages,
+        targets,
+        doc_name=doc_name,
+        previous_versions=previous_versions,
+        summary_artifact=summary_artifact,
     )
+    expected = {}
+    fragmented = False
+    for messages in batches:
+        for key, text in json.loads(messages[1]["content"])["candidates"].items():
+            if key in expected:
+                raise GroundingError("Grounding duplicate planned audit coverage")
+            expected[key] = text
+            fragmented |= key not in targets
+    if fragmented:
+        if summary_artifact is None:
+            raise GroundingError("Grounding unknown fragment coverage")
+        summary_artifact.verify(pages, candidates)
+        full = {k: v for k, v in targets.items() if k != summary_artifact.parent}
+        full.update({f.key: f.context + f.owned for f in summary_artifact.fragments})
+        if expected != full:
+            raise GroundingError("Grounding incomplete planned fragment coverage")
+    elif expected != targets:
+        raise GroundingError("Grounding incomplete planned audit coverage")
     checked_all = {}
     for messages in batches:
         selected = json.loads(messages[1]["content"])
@@ -377,7 +426,22 @@ async def audit_candidates(
                     raise GroundingError(
                         "Grounding quote outside selected evidence; manual review required"
                     )
+        if checked_all.keys() & checked.keys():
+            raise GroundingError("Grounding duplicate accepted audit coverage")
         checked_all.update(checked)
+    if set(checked_all) != set(expected):
+        raise GroundingError("Grounding missing accepted audit coverage")
+    if fragmented:
+        assert summary_artifact is not None
+        if (
+            candidates != frozen_candidates
+            or pages != frozen_pages
+            or live_previous != frozen_previous
+        ):
+            raise GroundingError("Grounding frozen audit inputs changed; manual review required")
+        summary_artifact.verify(pages, candidates)
+        numbers = sorted({n for f in summary_artifact.fragments for n in checked_all.pop(f.key)})
+        checked_all[summary_artifact.parent] = numbers
     # Do not mutate even staged candidates until every required batch passes.
     for target, numbers in checked_all.items():
         citations = " ".join(

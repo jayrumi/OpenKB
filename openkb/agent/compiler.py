@@ -38,7 +38,10 @@ from openkb.config import (
 )
 from openkb.grounding import (
     SOURCE_CONTRACT,
+    AuditSizeError,
+    GroundingError,
     audit_candidates,
+    audit_messages,
     load_source_pages,
     plan_audit_batches,
     source_context,
@@ -51,6 +54,7 @@ from openkb.reasoning import (
     stage_reasoning_kwargs,
 )
 from openkb.schema import INDEX_SEED, get_agents_md
+from openkb.summary_audit import SummaryArtifact, load_summary_artifact
 
 logger = logging.getLogger(__name__)
 
@@ -1627,6 +1631,7 @@ async def _compile_concepts(
     entity_types: list[str] | None = None,
     bundle=None,
     source_pages: dict[int, str] | None = None,
+    summary_artifact: SummaryArtifact | None = None,
 ) -> None:
     """Shared Steps 2-4: concepts plan → generate/update → index.
 
@@ -1703,7 +1708,7 @@ async def _compile_concepts(
             + (cleaned if rewrite_summary else original_summary)
         }
         await audit_candidates(source_pages, candidates, model, _llm_call_async,
-                               bundle=bundle, doc_name=doc_name)
+                               bundle=bundle, doc_name=doc_name, summary_artifact=summary_artifact)
         candidates[f"summaries/{doc_name}"] = candidates[f"summaries/{doc_name}"].removeprefix(
             summary_prefix
         )
@@ -2205,7 +2210,8 @@ async def _compile_concepts(
         {f"entities/{_sanitize_concept_name(n)}": b + "\n" + c for n, c, b, _ in entity_pending}
     )
     await audit_candidates(source_pages, candidates, model, _llm_call_async,
-                           bundle=bundle, doc_name=doc_name, previous_versions=previous_versions)
+                           bundle=bundle, doc_name=doc_name, previous_versions=previous_versions,
+                           summary_artifact=summary_artifact)
     candidates[f"summaries/{doc_name}"] = candidates[f"summaries/{doc_name}"].removeprefix(
         summary_prefix
     )
@@ -2388,6 +2394,17 @@ async def compile_long_doc(
     schema_md = get_agents_md(wiki_dir)
     summary_content = summary_path.read_text(encoding="utf-8")
     pages = load_source_pages(wiki_dir, doc_name)
+    summary_artifact = None
+    try:
+        audit_messages(pages, {f"summaries/{doc_name}": doc_description + "\n" + summary_content},
+                       doc_name=doc_name)
+    except AuditSizeError:
+        summary_artifact = load_summary_artifact(
+            kb_dir, summary_path, doc_id, doc_name, pages, prefix=doc_description + "\n"
+        )
+    except GroundingError:
+        # Size discovery only: the unchanged selective gate owns non-size refusals.
+        pass
 
     # Backfill OKF fields on the indexer-written summary. Idempotent: set
     # description before type so that when both keys are missing the prepends
@@ -2444,6 +2461,7 @@ async def compile_long_doc(
         entity_types=entity_types,
         bundle=bundle,
         source_pages=pages,
+        summary_artifact=summary_artifact,
     )
     # Read the successful result so backlinks and audit citations are preserved.
     latest = summary_path.read_text(encoding="utf-8")
