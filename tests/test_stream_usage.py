@@ -7,10 +7,11 @@ wire = transport.wire
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["chatgpt", "openai/responses"])
 @pytest.mark.parametrize("with_bundle", [False, True])
 @pytest.mark.parametrize("tool_turn", [False, True])
 async def test_chatgpt_stream_exposes_usage_for_every_completed_model_turn(
-    wire, kb_dir, monkeypatch, with_bundle, tool_turn
+    wire, kb_dir, monkeypatch, with_bundle, tool_turn, provider
 ):
     import litellm
     from agents import RunConfig, Runner
@@ -44,10 +45,10 @@ async def test_chatgpt_stream_exposes_usage_for_every_completed_model_turn(
     bundle = LlmCredentialBundle(reasoning_effort="medium") if with_bundle else None
     agent = build_query_agent(
         str(kb_dir / "wiki"),
-        "chatgpt/gpt-6-sol",
+        f"{provider}/gpt-6-sol",
         bundle=bundle,
     )
-    config = build_run_config_from_bundle("chatgpt/gpt-6-sol", bundle) or RunConfig()
+    config = build_run_config_from_bundle(f"{provider}/gpt-6-sol", bundle) or RunConfig()
     config.tracing_disabled = True
     result = Runner.run_streamed(agent, "Offline usage fixture", run_config=config)
     async for _ in result.stream_events():

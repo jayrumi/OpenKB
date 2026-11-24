@@ -97,7 +97,7 @@ def reasoning_request_kwargs(model, effort, kwargs):
     sent = dict(kwargs)
     if effort is not None:
         sent["reasoning_effort"] = effort
-        if model.startswith("chatgpt/"):
+        if model.startswith(("chatgpt/", "openai/responses/")):
             allowed = list(sent.get("allowed_openai_params") or [])
             if "reasoning_effort" not in allowed:
                 allowed.append("reasoning_effort")

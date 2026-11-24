@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 from collections.abc import Mapping
 from typing import Any, Literal
 
@@ -10,6 +12,33 @@ from openkb.config import DEFAULT_CONFIG
 Stage = Literal["indexing", "compilation", "query"]
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
 REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh")
+
+
+def require_chat_model_allowed(model: str) -> None:
+    """Apply an opt-in deployment allowlist without changing stored models.
+
+    OPENKB_CHAT_ALLOWED_MODELS is a JSON list of exact provider/model tokens.
+    When absent, legacy deployments retain their existing chat behavior.
+    This is chat admission, not a provider policy for indexing/compilation.
+    """
+    raw = os.environ.get("OPENKB_CHAT_ALLOWED_MODELS")
+    if raw is None:
+        return
+    error = "OPENKB_CHAT_ALLOWED_MODELS must be a JSON list of non-empty model strings"
+    try:
+        allowed = json.loads(raw)
+    except json.JSONDecodeError:
+        raise ValueError(error) from None
+    if not isinstance(allowed, list) or any(
+        not isinstance(token, str) or not token.strip() for token in allowed
+    ):
+        raise ValueError(error)
+    if model not in allowed:
+        raise ValueError(
+            f"Chat model {model!r} is not allowed by this deployment. "
+            "Please start a new chat with the configured query model; "
+            "your saved history is unchanged."
+        )
 
 
 def resolve_stage_reasoning(config: Mapping[str, Any], stage: Stage) -> str | None:

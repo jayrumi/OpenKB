@@ -72,6 +72,21 @@ def install_response_compat() -> None:
     )
 
     with _install_lock:
+        from litellm.llms.openai.responses.transformation import OpenAIResponsesAPIConfig
+
+        original_api_stream = OpenAIResponsesAPIConfig.should_fake_stream
+        if not getattr(original_api_stream, "_openkb_api_native_stream", False):
+
+            @wraps(original_api_stream)
+            def api_native_stream(self, model, stream, custom_llm_provider=None):
+                # Exact approved API IDs are absent from legacy SDK metadata.
+                if custom_llm_provider == "openai" and model in ("gpt-6-luna", "gpt-6-sol"):
+                    return False
+                return original_api_stream(self, model, stream, custom_llm_provider)
+
+            setattr(api_native_stream, "_openkb_api_native_stream", True)
+            setattr(OpenAIResponsesAPIConfig, "should_fake_stream", api_native_stream)
+
         if version("litellm") == "1.87.2":
             from litellm.llms.chatgpt.responses.transformation import ChatGPTResponsesAPIConfig
 

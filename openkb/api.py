@@ -96,6 +96,7 @@ from openkb.api_models import (
 )
 from openkb.api_output import output_router
 from openkb.api_pages_router import pages_router
+from openkb.api_pdf_router import pdf_router
 from openkb.cli import (
     get_kb_list,
     get_kb_status,
@@ -172,6 +173,7 @@ def create_app() -> FastAPI:
     app.include_router(kbs_router)
     app.include_router(pages_router)
     app.include_router(documents_router)
+    app.include_router(pdf_router)
 
     @app.get("/api/v1/kbs", response_model=KbListResponse)
     async def list_kbs_endpoint(
@@ -319,8 +321,8 @@ def create_app() -> FastAPI:
         _: None = Depends(require_bearer_token),
     ) -> Any:
         kb_dir = _resolve_kb(request.kb)
-        bundle = resolve_credential_bundle(kb_dir)
         session = _load_or_create_session(kb_dir, request.session_id)
+        bundle = resolve_credential_bundle(kb_dir)
         run_config = build_run_config_from_bundle(session.model, bundle)
 
         if request.stream:

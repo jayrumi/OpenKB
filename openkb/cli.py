@@ -2410,7 +2410,6 @@ def chat(ctx, resume, list_sessions_flag, delete_id, no_color, raw):
         return
 
     config = resolve_effective_config(kb_dir)[0]
-    _setup_llm_key(kb_dir)
 
     if resume is not None:
         try:
@@ -2425,6 +2424,12 @@ def chat(ctx, resume, list_sessions_flag, delete_id, no_color, raw):
                 click.echo(f"No matching session: {resume}")
             return
         session = load_session(kb_dir, resolved)
+        from openkb.stage_config import require_chat_model_allowed
+
+        try:
+            require_chat_model_allowed(session.model)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
     else:
         model: str = resolve_stage_model(config, "query")
         language: str = config.get("language", "en")
@@ -2432,6 +2437,7 @@ def chat(ctx, resume, list_sessions_flag, delete_id, no_color, raw):
 
     from openkb.agent.chat import run_chat
 
+    _setup_llm_key(kb_dir)
     try:
         asyncio.run(run_chat(kb_dir, session, no_color=no_color, raw=raw))
     except Exception as exc:

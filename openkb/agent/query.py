@@ -143,7 +143,7 @@ def build_query_agent(
     reasoning_effort: str | None = None,
 ) -> Agent:
     """Build the Q&A agent, preserving legacy runtime settings when no bundle."""
-    if model.startswith("chatgpt/"):
+    if model.startswith(("chatgpt/", "openai/responses/")):
         from openkb.provider_compat import install_response_compat
 
         install_response_compat()
@@ -202,7 +202,7 @@ def build_query_agent(
     else:
         model_settings = resolve_model_settings()
 
-    if model.startswith("chatgpt/"):
+    if model.startswith(("chatgpt/", "openai/responses/")):
         # Agents 0.17 omits stream_options unless explicitly requested;
         # LiteLLM then discards provider usage from streamed completions.
         model_settings["include_usage"] = True
@@ -216,7 +216,7 @@ def build_query_agent(
         from openai.types.shared import Reasoning
 
         model_settings["reasoning"] = Reasoning(effort=effort)
-        if model.startswith("chatgpt/"):
+        if model.startswith(("chatgpt/", "openai/responses/")):
             extra = dict(model_settings.get("extra_args") or {})
             extra["allowed_openai_params"] = ["reasoning_effort"]
             model_settings["extra_args"] = extra
@@ -652,7 +652,7 @@ def build_run_config_from_bundle(model: str, bundle: "LlmCredentialBundle | None
             model_settings=ModelSettings(
                 reasoning=Reasoning(effort=bundle.reasoning_effort),
                 extra_args={"allowed_openai_params": ["reasoning_effort"]}
-                if model.startswith("chatgpt/")
+                if model.startswith(("chatgpt/", "openai/responses/"))
                 else None,
             ),
         )

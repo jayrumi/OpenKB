@@ -84,7 +84,8 @@ async def test_leaf_low_reaches_sdk_http(wire):
 
 
 @pytest.mark.parametrize("effort", ["low", "none"])
-def test_flash_sdk_explicit_low_serialized_http(tmp_path, effort):
+@pytest.mark.parametrize("provider", ["chatgpt", "openai/responses"])
+def test_flash_sdk_explicit_low_serialized_http(tmp_path, effort, provider):
     import os
     import subprocess
     from pathlib import Path
@@ -105,6 +106,7 @@ def test_flash_sdk_explicit_low_serialized_http(tmp_path, effort):
     script = r"""
 import os, sys, socket, json, asyncio
 os.environ['LITELLM_LOCAL_MODEL_COST_MAP'] = 'True'
+os.environ['OPENAI_API_KEY'] = 'offline-key'
 socket.socket.connect = lambda *a, **k: (_ for _ in ()).throw(AssertionError('NETWORK FORBIDDEN'))
 sys.path.insert(0, sys.argv[1])
 import litellm, httpx
@@ -140,12 +142,12 @@ utils.start_learning_if_effort_dropped = lambda *a, **kw: True
 utils.learn_model_if_effort_dropped = lambda *a, **kw: None
 try:
     with flash_worker.completion_policy({'retries': 0, 'max_calls': 3}):
-        flash_worker.execute({'pdf_path': sys.argv[2], 'model': 'chatgpt/gpt-6-luna',
+        flash_worker.execute({'pdf_path': sys.argv[2], 'model': sys.argv[4] + '/gpt-6-luna',
                               'summary_reasoning_effort': sys.argv[3]})
 except BaseException as e:
     print('STOP_TYPE=' + type(e).__name__)
 assert requests, 'SDK never reached HTTP'
-expected = ['none', 'low'] if sys.argv[3] == 'none' else ['low']
+expected = ['none', 'low'] if sys.argv[3] == 'none' and sys.argv[4] == 'chatgpt' else [sys.argv[3]]
 assert [r.get('reasoning', {}).get('effort') for r in requests] == expected, requests
 assert requests[0]['model'] == 'gpt-6-luna'
 assert all(json.dumps(r).count('SUMMARY ATTRIBUTION POLICY') == 1 for r in requests)
@@ -154,7 +156,7 @@ print('WIRE_OK')
 """
     source = str(Path(__file__).resolve().parents[1] / "openkb")
     run = subprocess.run(
-        [python, "-I", "-c", script, source, str(pdf), effort],
+        [python, "-I", "-c", script, source, str(pdf), effort, provider],
         capture_output=True,
         text=True,
         timeout=90,

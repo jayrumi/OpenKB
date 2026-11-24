@@ -419,7 +419,7 @@ def _llm_call(
     **kwargs,
 ) -> str:
     """Single LLM call with animated progress and debug logging."""
-    if model.startswith("chatgpt/"):
+    if model.startswith(("chatgpt/", "openai/responses/")):
         from openkb.provider_compat import install_response_compat
 
         install_response_compat()
@@ -472,7 +472,7 @@ async def _llm_call_async(
     **kwargs,
 ) -> str:
     """Async LLM call with timing output and debug logging."""
-    if model.startswith("chatgpt/"):
+    if model.startswith(("chatgpt/", "openai/responses/")):
         from openkb.provider_compat import install_response_compat
 
         install_response_compat()

@@ -2,6 +2,9 @@ import React, { useEffect, useId, useRef, useState } from 'react'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import { useTheme } from '@/lib/theme'
+import PdfSourceLink from '@/components/PdfSourceLink'
+import { PdfKbContext } from '@/components/pdfContext'
+import { citationTarget } from '@/api/pdfSources'
 
 /** Guard for [text](url) links: only render a real anchor for http(s) or
  *  scheme-less (relative) URLs. Anything with another scheme (javascript:,
@@ -35,12 +38,15 @@ function inline(text: string, onWikiLink?: (target: string) => void): React.Reac
   const parts: React.ReactNode[] = []
   // Bold is non-greedy (`.+?`) so it tolerates an inner opposite-emphasis
   // (`**a *b* c**`); italic keeps a bounded `[^*]+`/`[^_]+` class.
-  const re = /(\[\[[^\]]+\]\]|\\\([\s\S]+?\\\)|\*\*.+?\*\*|~~[^~]+~~|`[^`]+`|\[[^\]]+\]\([^)]+\)|\*[^*]+\*|_[^_]+_)/g
+  const re = /(\[source [^\]\r\n]+? p\. [1-9]\d*\]|\[\[[^\]]+\]\]|\\\([\s\S]+?\\\)|\*\*.+?\*\*|~~[^~]+~~|`[^`]+`|\[[^\]]+\]\([^)]+\)|\*[^*]+\*|_[^_]+_)/g
   let last = 0, m: RegExpExecArray | null, k = 0
   while ((m = re.exec(text))) {
     if (m.index > last) parts.push(text.slice(last, m.index))
     const tok = m[0]
-    if (tok.startsWith('[[')) {
+    const citation = citationTarget(tok)
+    if (citation) {
+      parts.push(<PdfSourceLink key={k++} docName={citation.docName} page={citation.page}>{tok}</PdfSourceLink>)
+    } else if (tok.startsWith('[[')) {
       // Obsidian/wiki alias form: [[target|alias]]. Split on the FIRST `|` —
       // the part before is the nav TARGET, the part after (if any) is the
       // DISPLAY label. Multiple `|` keep the rest in the label; an empty/absent
@@ -218,9 +224,11 @@ function MermaidBlock({ code }: { code: string }) {
 
 export default function MarkdownView({
   source,
+  kb,
   onWikiLink,
 }: {
   source: string
+  kb?: string
   /** Navigate to a `[[target]]` wikilink's page. Omit to render plain,
    *  non-interactive tokens (no `cursor-pointer` implying a dead click). */
   onWikiLink?: (target: string) => void
@@ -429,5 +437,5 @@ export default function MarkdownView({
     else out.push(<p key={key++} className="my-1.5 text-[14px] leading-relaxed text-muted-foreground">{inline(line, onWikiLink)}</p>)
   }
   flushBlocks()
-  return <div>{out}</div>
+  return <PdfKbContext.Provider value={kb ?? ""}><div>{out}</div></PdfKbContext.Provider>
 }

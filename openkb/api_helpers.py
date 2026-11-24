@@ -49,7 +49,11 @@ from openkb.config import (
 )
 from openkb.log import append_log
 from openkb.reasoning import with_reasoning_effort
-from openkb.stage_config import resolve_stage_model, resolve_stage_reasoning
+from openkb.stage_config import (
+    require_chat_model_allowed,
+    resolve_stage_model,
+    resolve_stage_reasoning,
+)
 from openkb.watch_service import WatchRegistry
 
 security = HTTPBearer(auto_error=False)
@@ -394,12 +398,17 @@ async def _add_saved_file(
 def _load_or_create_session(kb_dir: Path, session_id: str | None) -> ChatSession:
     if session_id:
         try:
-            return load_session(kb_dir, session_id)
+            session = load_session(kb_dir, session_id)
         except FileNotFoundError as exc:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Chat session not found: {session_id}",
             ) from exc
+        try:
+            require_chat_model_allowed(session.model)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        return session
 
     config = resolve_effective_config(kb_dir)[0]
     model = resolve_stage_model(config, "query")
