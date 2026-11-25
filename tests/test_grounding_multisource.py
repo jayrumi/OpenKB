@@ -29,6 +29,7 @@ def test_physical_page_requires_current_document_identity(evidence_doc):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outcome", ["supported", "unsupported", "cancel"])
+@pytest.mark.usefixtures("enable_grounding_audit")
 async def test_update_audits_exact_previous_version_without_trusting_new_claims(
     tmp_path, monkeypatch, outcome
 ):

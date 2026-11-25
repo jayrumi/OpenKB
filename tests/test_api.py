@@ -2538,6 +2538,7 @@ def test_global_config_get_defaults_when_absent(monkeypatch, tmp_path):
         "query_reasoning_effort": None,
         "language": "en",
         "pageindex_threshold": 20,
+        "grounding_audit": False,
         # Default entity-type vocabulary when global.yaml sets none.
         "entity_types": ["person", "organization", "place", "product", "work", "event", "other"],
         # kb_root reports the EFFECTIVE root; with no env/global override it is

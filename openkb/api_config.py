@@ -35,6 +35,7 @@ from openkb.config import (
     resolve_credential_bundle,
     resolve_effective_config,
     resolve_entity_types,
+    resolve_grounding_audit,
     save_config,
 )
 from openkb.locks import atomic_write_text
@@ -163,6 +164,7 @@ def read_kb_config(kb_dir: Path) -> KbConfigResponse:
         },
         language=effective["language"],
         pageindex_threshold=effective["pageindex_threshold"],
+        grounding_audit=resolve_grounding_audit(effective),
         # Cleaned effective list (what the compiler will use), not the raw stored
         # value — resolve_entity_types defaults + dedupes + ensures "other".
         entity_types=resolve_entity_types(effective, warn=False),
@@ -185,6 +187,7 @@ def read_kb_config(kb_dir: Path) -> KbConfigResponse:
             },
             language=global_config.get("language"),
             pageindex_threshold=global_config.get("pageindex_threshold"),
+            grounding_audit=global_config.get("grounding_audit"),
             entity_types=global_config.get("entity_types"),
         ),
     )
@@ -303,6 +306,7 @@ def read_global_config() -> GlobalConfigResponse:
         },
         language=gc.get("language", DEFAULT_CONFIG["language"]),
         pageindex_threshold=gc.get("pageindex_threshold", DEFAULT_CONFIG["pageindex_threshold"]),
+        grounding_audit=resolve_grounding_audit(gc),
         # Effective global vocabulary (cleaned; defaults to DEFAULT_ENTITY_TYPES).
         entity_types=resolve_entity_types(gc, warn=False),
         # Report the EFFECTIVE root (env > global.yaml kb_root > default) via the

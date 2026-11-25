@@ -1579,6 +1579,10 @@ class TestCacheControl:
         )
         sp = wiki / "summaries" / "big.md"
         sp.write_text("PageIndex tree summary.", encoding="utf-8")
+        (wiki / "sources").mkdir()
+        (wiki / "sources/big.json").write_text(
+            json.dumps([{"page": 1, "content": "Original document text."}])
+        )
         (tmp_path / ".openkb").mkdir()
 
         captured: list[list[dict]] = []
@@ -1624,6 +1628,10 @@ class TestCompileLongDoc:
         )
         summary_path = wiki / "summaries" / "big-doc.md"
         summary_path.write_text("# Big Doc\n\nPageIndex summary tree.", encoding="utf-8")
+        (wiki / "sources").mkdir()
+        (wiki / "sources/big-doc.json").write_text(
+            json.dumps([{"page": 1, "content": "Deep learning is a subfield of ML."}])
+        )
         openkb_dir = tmp_path / ".openkb"
         openkb_dir.mkdir()
         (openkb_dir / "config.yaml").write_text("model: gpt-4o-mini\n")

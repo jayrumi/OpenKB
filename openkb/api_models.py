@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, StrictBool
 
 
 class QueryRequest(BaseModel):
@@ -432,6 +432,7 @@ class _KbConfigWritable(BaseModel):
     )
     language: str | None = None
     pageindex_threshold: int | None = None
+    grounding_audit: StrictBool | None = None
     # Entity-type vocabulary for extraction. A list REPLACES the layer below; an
     # explicit null reverts to inherited. Values are cleaned/deduped and "other"
     # is always ensured at read time (config.resolve_entity_types).
@@ -456,10 +457,12 @@ class GlobalConfigValues(BaseModel):
     query_reasoning_effort: str | None = None
     language: str | None = None
     pageindex_threshold: int | None = None
+    grounding_audit: StrictBool | None = None
     entity_types: list[str] | None = None
 
 
 class GlobalConfigResponse(BaseModel):
+    grounding_audit: StrictBool = False
     model: str
     indexing_model: str | None = None
     compilation_model: str | None = None
@@ -502,6 +505,7 @@ class GlobalConfigPatchRequest(BaseModel):
 
 
 class KbConfigResponse(BaseModel):
+    grounding_audit: StrictBool = False
     model: str
     indexing_model: str | None = None
     compilation_model: str | None = None

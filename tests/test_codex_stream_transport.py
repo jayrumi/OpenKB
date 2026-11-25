@@ -274,6 +274,9 @@ async def test_compile_then_query_keeps_shared_sdk_client_open(cached_wire, kb_d
 
     summary = kb_dir / "wiki" / "summaries" / "fixture.md"
     summary.write_text("# Fixture summary\n")
+    (kb_dir / "wiki" / "sources" / "fixture.json").write_text(
+        json.dumps([{"page": 1, "content": "Offline fixture source."}])
+    )
     model = "chatgpt/gpt-6.2-sol"
 
     async def compile_one_concept(*args, **kwargs):

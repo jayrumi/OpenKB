@@ -429,6 +429,10 @@ def test_compile_long_doc_backfills_summary_frontmatter(tmp_path):
         "model: gpt-4o-mini\nlanguage: en\n", encoding="utf-8"
     )
     summary_path = wiki / "summaries" / "long.md"
+    (wiki / "sources").mkdir()
+    (wiki / "sources/long.json").write_text(
+        json.dumps([{"page": 1, "content": "Original long report."}])
+    )
     summary_path.write_text(
         "---\ndoc_type: pageindex\nfull_text: sources/long.json\n---\n\n# Long\n",
         encoding="utf-8",

@@ -16,6 +16,18 @@ def _reset_extra_headers():
 
 
 @pytest.fixture
+def enable_grounding_audit(tmp_path):
+    """Auditing regressions explicitly exercise the optional strict gate."""
+    import yaml
+
+    config_path = tmp_path / ".openkb/config.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    values = yaml.safe_load(config_path.read_text()) if config_path.exists() else {}
+    values["grounding_audit"] = True
+    config_path.write_text(yaml.safe_dump(values))
+
+
+@pytest.fixture
 def kb_dir(tmp_path):
     """Create a minimal knowledge base directory structure for testing."""
     # Raw documents

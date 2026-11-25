@@ -44,6 +44,9 @@ def test_required_page_failure_never_publishes_partial_success(kb_dir, monkeypat
     wiki = kb_dir / "wiki"
     source = wiki / "sources" / "warehouse.md"
     source.write_text("Warehouse modeling")
+    (wiki / "sources" / "warehouse.json").write_text(
+        json.dumps([{"page": 1, "content": "Warehouse modeling"}])
+    )
     summary = wiki / "summaries" / "warehouse.md"
     summary.write_text("Existing indexed summary")
     index = wiki / "index.md"
@@ -100,6 +103,9 @@ def _seed_recovery(kb_dir):
     storage = SQLiteStorage(str(kb_dir / ".openkb" / "pageindex.db"))
     storage.get_or_create_collection("default")
     for name, doc_id in (("warehouse", "indexed-id"), ("other", "other-id")):
+        (wiki / "sources" / f"{name}.json").write_text(
+            json.dumps([{"page": 1, "content": name}])
+        )
         raw = kb_dir / "raw" / f"{name}.pdf"
         raw.write_bytes(f"%PDF-preservation-sentinel:{name}".encode())
         storage.save_document(

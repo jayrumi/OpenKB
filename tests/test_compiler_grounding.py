@@ -11,6 +11,7 @@ SOURCE = "Our suite includes a review surface (called Mosaic), code search, and 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("long_doc", [False, True])
+@pytest.mark.usefixtures("enable_grounding_audit")
 async def test_unsupported_attribution_aborts_before_any_wiki_write(
     tmp_path, monkeypatch, long_doc
 ):
@@ -290,6 +291,7 @@ async def test_ambiguous_candidates_without_original_pages_require_manual_review
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("long_doc", [False, True])
+@pytest.mark.usefixtures("enable_grounding_audit")
 async def test_combined_product_publication_has_same_page_provenance(
     tmp_path, monkeypatch, long_doc
 ):
@@ -352,6 +354,7 @@ async def test_combined_product_publication_has_same_page_provenance(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("planned", [False, True])
+@pytest.mark.usefixtures("enable_grounding_audit")
 async def test_summary_description_is_audited_before_publication(tmp_path, monkeypatch, planned):
     source = tmp_path / "source.txt"
     source.write_text(SOURCE)

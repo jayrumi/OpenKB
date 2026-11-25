@@ -50,6 +50,7 @@ def test_cited_late_page_is_selected_despite_zero_lexical_overlap():
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_grounding_audit")
 async def test_large_book_uses_bounded_target_evidence_in_one_audit(tmp_path, monkeypatch):
     wiki = tmp_path / "wiki"
     (wiki / "sources").mkdir(parents=True)
@@ -107,6 +108,7 @@ async def test_large_book_uses_bounded_target_evidence_in_one_audit(tmp_path, mo
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_grounding_audit")
 async def test_oversized_previous_version_blocks_before_candidate_generation(tmp_path, monkeypatch):
     from openkb.grounding import GroundingError
 
@@ -115,6 +117,10 @@ async def test_oversized_previous_version_blocks_before_candidate_generation(tmp
     (wiki / "summaries").mkdir()
     summary = wiki / "summaries/book.md"
     summary.write_text("Zircon overview")
+    (wiki / "sources").mkdir()
+    (wiki / "sources/book.json").write_text(
+        json.dumps([{"page": 1, "content": "Zircon overview"}])
+    )
     (wiki / "entities/zircon.md").write_text("Prior fact " * 11000)
     calls = []
 

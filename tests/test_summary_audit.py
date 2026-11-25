@@ -332,7 +332,7 @@ def test_invalid_summary_fragmentation_fails_locally(kind):
 @pytest.mark.parametrize("empty_plan", [True, False])
 @pytest.mark.parametrize("bounded_parent", [True, False])
 async def test_compiler_long_summary_refusal_preserves_all_wiki_bytes(
-    kb_dir, monkeypatch, empty_plan, bounded_parent
+    kb_dir, monkeypatch, empty_plan, bounded_parent, enable_grounding_audit
 ):
     from openkb.agent import compiler
 

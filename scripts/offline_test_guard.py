@@ -23,5 +23,14 @@ def no_external_network(monkeypatch):
     async def aforbidden(*args, **kwargs):
         raise AssertionError("Real LLM calls forbidden in offline regression tests")
 
+    from litellm.llms.chatgpt.authenticator import Authenticator
+
+    monkeypatch.setattr(Authenticator, "__init__", lambda self: None)
+    monkeypatch.setattr(Authenticator, "get_access_token", lambda self: "offline-token")
+    monkeypatch.setattr(Authenticator, "get_account_id", lambda self: None)
+    monkeypatch.setattr(Authenticator, "_read_auth_file", forbidden)
+    monkeypatch.setattr(Authenticator, "_login_device_code", forbidden)
+    monkeypatch.setattr(Authenticator, "_request_device_code", forbidden)
+    monkeypatch.setattr(Authenticator, "_write_auth_file", forbidden)
     monkeypatch.setattr(litellm, "completion", forbidden)
     monkeypatch.setattr(litellm, "acompletion", aforbidden)

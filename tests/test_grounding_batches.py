@@ -194,6 +194,7 @@ async def test_actual_audit_candidates_uses_same_planner_and_complete_target_cov
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_grounding_audit")
 async def test_compiler_preflight_replays_actual_cached_overview_plan_binding(
     actual_input, tmp_path, monkeypatch
 ):
@@ -257,6 +258,7 @@ async def test_compiler_preflight_replays_actual_cached_overview_plan_binding(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("enable_grounding_audit")
 async def test_compiler_later_batch_refusal_publishes_nothing(tmp_path, monkeypatch):
     from openkb.agent import compiler
 
