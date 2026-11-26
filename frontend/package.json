@@ -8,6 +8,7 @@
     "i18n:check": "node scripts/check-i18n.mjs",
     "build": "npm run i18n:check && tsc -b && vite build",
     "lint": "eslint .",
+    "test:pdf": "node scripts/test-pdf-sources.mjs && node scripts/test-pdf-browser.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

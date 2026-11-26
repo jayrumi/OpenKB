@@ -1,0 +1,30 @@
+{
+  "compilation_repaired": true,
+  "broken_links": [],
+  "source_pages_match_pdf": true,
+  "protected_staging_files_changed": [],
+  "production_files_checked": 639,
+  "production_files_changed": [],
+  "answers": {
+    "query": {
+      "passed": true,
+      "page": 2,
+      "actual_page_tool_called": true,
+      "answer": "Проверю в каталоге, как открыть исходный документ.Посмотрю в оглавлении, на какой странице описано зерно таблицы фактов продаж.Проверю формулировку на странице 2 исходного документа.Зерно таблицы фактов продаж — одна товарная позиция заказа на строку. Источник: [[summaries/warehouse-modeling]], стр. 2."
+    },
+    "chat": {
+      "passed": true,
+      "page": 3,
+      "actual_page_tool_called": true,
+      "answer": "Загружу инструкции OpenKB для поиска исходной страницы.Проверю в каталоге, как открыть исходные страницы `warehouse-modeling`.Открою оглавление документа, чтобы найти страницу про Type 2.Сверю список столбцов с текстом страницы 3 исходного PDF.Для Type 2 нужны суррогатный ключ версии, естественный ключ сущности (одинаковый для всех её версий), `valid_from` и `valid_to` для периода действия и `is_current` — признак текущей версии.\n\nИсточник: [[summaries/warehouse-modeling]], стр. 3 PDF."
+    }
+  },
+  "webui_browser": {
+    "passed": true,
+    "url": "http://127.0.0.1:17566/#/chat/20261120-095524-ido",
+    "console_errors": [],
+    "screenshot": "/home/jayrumi/openkb-development/e2e-repair-20261120/webui-answer.png"
+  },
+  "same_process_compilation_then_query": "pass; real compilation, query and chat in one API lifespan",
+  "production_deployed": false
+}

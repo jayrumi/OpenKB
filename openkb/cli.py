@@ -49,6 +49,9 @@ litellm.suppress_debug_info = True
 from dotenv import load_dotenv
 
 from openkb.agent.compiler import DEFAULT_COMPILE_CONCURRENCY, compile_long_doc
+from openkb.stage_config import resolve_stage_model
+from openkb.reasoning import stage_reasoning_kwargs
+from openkb.llm_lifecycle import run_owned_llm_loop
 from openkb.config import (
     DEFAULT_CONFIG,
     resolve_effective_config,
@@ -432,9 +435,19 @@ def _run_compile_with_retry(coro_factory, label: str) -> None:
     click.echo(f"  {label}...")
     for attempt in range(2):
         try:
-            asyncio.run(coro_factory())
+            run_owned_llm_loop(coro_factory())
             return
         except Exception as exc:
+            from openkb.grounding import GroundingError
+
+            cause: BaseException | None = exc
+            seen: set[int] = set()
+            while cause is not None and id(cause) not in seen:
+                seen.add(id(cause))
+                if isinstance(cause, GroundingError):
+                    click.echo("  [ERROR] Source attribution requires review; compilation not retried.")
+                    raise
+                cause = cause.__cause__ or cause.__context__
             if attempt == 0:
                 click.echo("  Retrying compilation in 2s...")
                 time.sleep(2)
@@ -480,7 +493,7 @@ def _add_single_file_locked(
     # process-wide state; only the CLI path needs the legacy global setup.
     if bundle is None:
         _setup_llm_key(kb_dir)
-    model: str = config.get("model", DEFAULT_CONFIG["model"])
+    model: str = resolve_stage_model(config, "compilation")
 
     staging_dir = _staging_dir_for(kb_dir, file_path) if stage else None
 
@@ -718,7 +731,7 @@ def import_from_pageindex_cloud(doc_id: str, kb_dir: Path) -> Literal["added", "
     openkb_dir = kb_dir / ".openkb"
     config = resolve_effective_config(kb_dir)[0]
     _setup_llm_key(kb_dir)
-    model: str = config.get("model", DEFAULT_CONFIG["model"])
+    model: str = resolve_stage_model(config, "compilation")
 
     path_key = f"pageindex-cloud:{doc_id}"
     synthetic_hash = hashlib.sha256(path_key.encode("utf-8")).hexdigest()
@@ -1238,7 +1251,7 @@ def query(ctx, question, save, raw):
 
     config = resolve_effective_config(kb_dir)[0]
     _setup_llm_key(kb_dir)
-    model: str = config.get("model", DEFAULT_CONFIG["model"])
+    model: str = resolve_stage_model(config, "query")
 
     stream = _stream_to_tty()
     try:
@@ -1295,8 +1308,13 @@ def _cleanup_pageindex(
 
     _setup_llm_key(kb_dir)
     config = resolve_effective_config(kb_dir)[0]
-    model = config.get("model", DEFAULT_CONFIG.get("model", "gpt-5.4"))
-    client = PageIndexClient(model=model, storage_path=str(openkb_dir))
+    model = resolve_stage_model(config, "indexing")
+    if model.startswith("chatgpt/"):
+        from openkb.provider_compat import OAuthPageIndexClient
+
+        client = OAuthPageIndexClient(model=model, storage_path=str(openkb_dir))
+    else:
+        client = PageIndexClient(model=model, storage_path=str(openkb_dir))
     col = client.collection()
 
     if doc_id is None:
@@ -1968,12 +1986,14 @@ def recompile(ctx, doc_name, all_docs, dry_run, yes, refresh_schema):
 
     _setup_llm_key(kb_dir)
     config = resolve_effective_config(kb_dir)[0]
-    model: str = config.get("model", DEFAULT_CONFIG["model"])
+    model: str = resolve_stage_model(config, "compilation")
     max_concurrency = resolve_concurrency(config) or DEFAULT_COMPILE_CONCURRENCY
 
     # Import lazily and reference via the module so tests can patch
     # ``openkb.agent.compiler.compile_*`` and see the call.
     from openkb.agent import compiler
+    from openkb.add_coordinator import DirtyRollbackError
+    from openkb.recompile import recompile_mutation
 
     recompiled = 0
     skipped = 0
@@ -2005,16 +2025,19 @@ def recompile(ctx, doc_name, all_docs, dry_run, yes, refresh_schema):
             click.echo(f"[{i}/{total}] Recompiling long doc {name}...")
             start = time.time()
             try:
-                asyncio.run(
-                    compiler.compile_long_doc(
-                        name,
-                        summary_path,
-                        doc_id,
-                        kb_dir,
-                        model,
-                        max_concurrency=max_concurrency,
+                with recompile_mutation(kb_dir, name):
+                    run_owned_llm_loop(
+                        compiler.compile_long_doc(
+                            name,
+                            summary_path,
+                            doc_id,
+                            kb_dir,
+                            model,
+                            max_concurrency=max_concurrency,
+                        )
                     )
-                )
+            except DirtyRollbackError:
+                raise
             except Exception as exc:
                 click.echo(f"  [ERROR] Compilation failed: {exc}")
                 logging.getLogger(__name__).debug("Recompile traceback:", exc_info=True)
@@ -2034,15 +2057,18 @@ def recompile(ctx, doc_name, all_docs, dry_run, yes, refresh_schema):
             click.echo(f"[{i}/{total}] Recompiling short doc {name}...")
             start = time.time()
             try:
-                asyncio.run(
-                    compiler.compile_short_doc(
-                        name,
-                        source_path,
-                        kb_dir,
-                        model,
-                        max_concurrency=max_concurrency,
+                with recompile_mutation(kb_dir, name):
+                    run_owned_llm_loop(
+                        compiler.compile_short_doc(
+                            name,
+                            source_path,
+                            kb_dir,
+                            model,
+                            max_concurrency=max_concurrency,
+                        )
                     )
-                )
+            except DirtyRollbackError:
+                raise
             except Exception as exc:
                 click.echo(f"  [ERROR] Compilation failed: {exc}")
                 logging.getLogger(__name__).debug("Recompile traceback:", exc_info=True)
@@ -2168,9 +2194,11 @@ async def iter_recompile(
         if bundle is None:
             _setup_llm_key(kb_dir)
         config = resolve_effective_config(kb_dir)[0]
-        model: str = config.get("model", DEFAULT_CONFIG["model"])
+        model: str = resolve_stage_model(config, "compilation")
 
+        from openkb.add_coordinator import DirtyRollbackError
         from openkb.agent import compiler
+        from openkb.recompile import recompile_mutation
 
         recompiled = 0
         skipped = 0
@@ -2213,9 +2241,12 @@ async def iter_recompile(
                 else:
                     start = time.time()
                     try:
-                        await compiler.compile_long_doc(
-                            name, summary_path, doc_id, kb_dir, model, bundle=bundle
-                        )
+                        with recompile_mutation(kb_dir, name):
+                            await compiler.compile_long_doc(
+                                name, summary_path, doc_id, kb_dir, model, bundle=bundle
+                            )
+                    except DirtyRollbackError:
+                        raise
                     except Exception as exc:
                         doc = {
                             "name": name,
@@ -2249,9 +2280,12 @@ async def iter_recompile(
                 else:
                     start = time.time()
                     try:
-                        await compiler.compile_short_doc(
-                            name, source_path, kb_dir, model, bundle=bundle
-                        )
+                        with recompile_mutation(kb_dir, name):
+                            await compiler.compile_short_doc(
+                                name, source_path, kb_dir, model, bundle=bundle
+                            )
+                    except DirtyRollbackError:
+                        raise
                     except Exception as exc:
                         doc = {
                             "name": name,
@@ -2376,7 +2410,6 @@ def chat(ctx, resume, list_sessions_flag, delete_id, no_color, raw):
         return
 
     config = resolve_effective_config(kb_dir)[0]
-    _setup_llm_key(kb_dir)
 
     if resume is not None:
         try:
@@ -2391,13 +2424,20 @@ def chat(ctx, resume, list_sessions_flag, delete_id, no_color, raw):
                 click.echo(f"No matching session: {resume}")
             return
         session = load_session(kb_dir, resolved)
+        from openkb.stage_config import require_chat_model_allowed
+
+        try:
+            require_chat_model_allowed(session.model)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
     else:
-        model: str = config.get("model", DEFAULT_CONFIG["model"])
+        model: str = resolve_stage_model(config, "query")
         language: str = config.get("language", "en")
         session = ChatSession.new(kb_dir, model, language)
 
     from openkb.agent.chat import run_chat
 
+    _setup_llm_key(kb_dir)
     try:
         asyncio.run(run_chat(kb_dir, session, no_color=no_color, raw=raw))
     except Exception as exc:
@@ -2458,7 +2498,7 @@ async def run_lint(kb_dir: Path) -> Path | None:
 
         config = resolve_effective_config(kb_dir)[0]
         _setup_llm_key(kb_dir)
-        model: str = config.get("model", DEFAULT_CONFIG["model"])
+        model: str = resolve_stage_model(config, "compilation")
 
         click.echo("Running structural lint...")
         structural_report = run_structural_lint(kb_dir)
@@ -2466,7 +2506,14 @@ async def run_lint(kb_dir: Path) -> Path | None:
 
         click.echo("Running knowledge lint...")
         try:
-            knowledge_report = await run_knowledge_lint(kb_dir, model)
+            reasoning_kwargs = stage_reasoning_kwargs(config, "compilation")
+            if reasoning_kwargs:
+                from openkb.agent.query import build_run_config_from_bundle
+
+                reasoning_kwargs["run_config"] = build_run_config_from_bundle(
+                    model, reasoning_kwargs["bundle"]
+                )
+            knowledge_report = await run_knowledge_lint(kb_dir, model, **reasoning_kwargs)
         except Exception as exc:
             knowledge_report = f"Knowledge lint failed: {exc}"
         click.echo(knowledge_report)
@@ -2914,7 +2961,7 @@ def skill_new(ctx, name, intent, yes_flag):
         click.echo(f"[ERROR] {exc}", err=True)
         ctx.exit(1)
     config = resolve_effective_config(kb_dir)[0]
-    model = config.get("model", DEFAULT_CONFIG["model"])
+    model = resolve_stage_model(config, "compilation")
 
     # Overwrite handling (CLI-specific). Done AFTER key/config so a
     # missing key doesn't wipe the user's existing skill output.
@@ -2960,6 +3007,7 @@ def skill_new(ctx, name, intent, yes_flag):
         intent=intent,
         kb_dir=kb_dir,
         model=model,
+        **stage_reasoning_kwargs(config, "compilation"),
     )
     try:
         asyncio.run(gen.run())
@@ -3238,7 +3286,7 @@ def skill_eval(ctx, name, save_flag, eval_set_path, count):
         click.echo(f"[ERROR] {exc}", err=True)
         ctx.exit(1)
     config = resolve_effective_config(kb_dir)[0]
-    model = config.get("model", DEFAULT_CONFIG["model"])
+    model = resolve_stage_model(config, "compilation")
 
     eval_set: list[EvalPrompt] | None = None
     if eval_set_path:
@@ -3403,7 +3451,7 @@ def deck_new(ctx, name, intent, yes_flag, critique_flag, skill_name):
         click.echo(f"[ERROR] {exc}", err=True)
         ctx.exit(1)
     config = resolve_effective_config(kb_dir)[0]
-    model = config.get("model", DEFAULT_CONFIG["model"])
+    model = resolve_stage_model(config, "compilation")
 
     # Overwrite handling — inline because openkb.skill.workspace.save_iteration
     # is hard-wired to skill paths (uses skill_dir / skill_workspace_dir from
@@ -3448,6 +3496,7 @@ def deck_new(ctx, name, intent, yes_flag, critique_flag, skill_name):
         model=model,
         critique=critique_flag,
         skill_name=skill_name,
+        **stage_reasoning_kwargs(config, "compilation"),
     )
     try:
         asyncio.run(gen.run())
@@ -3754,7 +3803,8 @@ async def run_lint_report(
     config = resolve_effective_config(kb_dir)[0]
     if bundle is None:
         _setup_llm_key(kb_dir)
-    model: str = config.get("model", DEFAULT_CONFIG["model"])
+    model: str = resolve_stage_model(config, "compilation")
+    bundle = stage_reasoning_kwargs(config, "compilation", bundle).get("bundle", bundle)
     run_config = build_run_config_from_bundle(model, bundle)
 
     if echo:

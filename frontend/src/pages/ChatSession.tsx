@@ -6,6 +6,7 @@ import { ArrowLeft, FileText, FolderInput, Loader2, Sparkles, BookText, CheckCir
 import { toast } from "sonner"
 import ChatInput, { slashCommands, type SlashCommand } from "@/components/ChatInput"
 import MarkdownView from "@/components/MarkdownView"
+import PdfSourceLink from "@/components/PdfSourceLink"
 import ArtifactCard, { type Artifact } from "@/components/ArtifactCard"
 import { AnimatePresence } from "motion/react"
 import ArtifactPanel, { artifactKey } from "@/components/ArtifactPanel"
@@ -46,7 +47,7 @@ interface ArtifactTurn {
 /** A user turn, an assistant chat turn, or a generator (artifact) turn. */
 type Msg =
   | { id: string; role: "user"; text: string; command?: string }
-  | { id: string; role: "assistant"; turn: ChatTurnState }
+  | { id: string; role: "assistant"; kb: string; turn: ChatTurnState }
   | { id: string; role: "artifact"; art: ArtifactTurn }
 
 /**
@@ -96,6 +97,7 @@ interface NavState {
 
 /** The side panel that renders a clicked `read_file` source's real page. */
 interface PanelState {
+  kb: string
   open: boolean
   path: string
   content: string | null
@@ -103,16 +105,16 @@ interface PanelState {
   loading: boolean
 }
 
-const CLOSED_PANEL: PanelState = { open: false, path: "", content: null, error: null, loading: false }
+const CLOSED_PANEL: PanelState = { kb: "", open: false, path: "", content: null, error: null, loading: false }
 
 /**
  * One tool-read step in the interleaved turn trace: a compact status line that
  * shows a spinner while the read is in flight and a green ✅ once it resolves.
  * A `page` read is clickable (opens the real wiki page via {@link openSource},
- * exactly like the old source chip); a `doc` read is a non-clickable label
- * (its PageIndex-internal content has no standalone page to open).
+ * exactly like the old source chip); a `doc` read includes physical-page links
+ * only when a registered original PDF is available.
  */
-function ToolStep({ source, done, onOpen }: { source: Source; done: boolean; onOpen: (s: Source) => void }) {
+function ToolStep({ source, done, onOpen, kb }: { source: Source; done: boolean; onOpen: (s: Source) => void; kb: string }) {
   const { t } = useTranslation("chat")
   const TypeIcon = source.kind === "page" ? FileText : BookText
   const base =
@@ -150,16 +152,21 @@ function ToolStep({ source, done, onOpen }: { source: Source; done: boolean; onO
   return (
     <div className={base} title={t("sources.internalTip")}>
       {inner}
+      {source.docName && source.pages?.map((page) => (
+        <PdfSourceLink key={page} kb={kb} docName={source.docName!} page={page}>p. {page}</PdfSourceLink>
+      ))}
     </div>
   )
 }
 
 function AssistantMessage({
+  kb,
   turn,
   onOpen,
   onOpenArtifact,
 }: {
   turn: ChatTurnState
+  kb: string
   onOpen: (s: Source) => void
   onOpenArtifact: (a: Artifact) => void
 }) {
@@ -189,6 +196,7 @@ function AssistantMessage({
               step.text.trim() ? (
                 <div key={`step-${i}`} className="text-[14px]">
                   <MarkdownView
+                    kb={kb}
                     source={step.text}
                     onWikiLink={(target) => onOpen({ kind: "page", label: target, path: target })}
                   />
@@ -196,7 +204,7 @@ function AssistantMessage({
               ) : null
             ) : (
               <div key={`step-${i}`}>
-                <ToolStep source={step.source} done={step.done} onOpen={onOpen} />
+                <ToolStep kb={kb} source={step.source} done={step.done} onOpen={onOpen} />
               </div>
             ),
           )}
@@ -408,7 +416,7 @@ export default function ChatSession() {
     if (!activeKb) return
     setRunning(true)
     const assistantId = nid()
-    setMsgs((m) => [...m, { id: assistantId, role: "assistant", turn: initialTurnState() }])
+    setMsgs((m) => [...m, { id: assistantId, role: "assistant", kb: activeKb, turn: initialTurnState() }])
 
     const patch = (fn: (t: ChatTurnState) => ChatTurnState) =>
       setMsgs((m) => m.map((x) => (x.id === assistantId && x.role === "assistant" ? { ...x, turn: fn(x.turn) } : x)))
@@ -553,6 +561,7 @@ export default function ChatSession() {
             restored.push({
               id: nid(),
               role: "assistant",
+              kb: resolvedKb,
               turn: {
                 ...initialTurnState(),
                 answer: text,
@@ -607,12 +616,12 @@ export default function ChatSession() {
     }
   }, [])
 
-  const openSource = async (s: Source) => {
+  const openSource = async (s: Source, sourceKb: string) => {
     if (s.kind !== "page" || !s.path) return
-    setPanel({ open: true, path: s.path, content: null, error: null, loading: true })
+    setPanel({ kb: sourceKb, open: true, path: s.path, content: null, error: null, loading: true })
     try {
-      const r = await getPage(kbRef.current, s.path)
-      setPanel({ open: true, path: s.path, content: r.content, error: null, loading: false })
+      const r = await getPage(sourceKb, s.path)
+      setPanel({ kb: sourceKb, open: true, path: s.path, content: r.content, error: null, loading: false })
     } catch (e) {
       // A tool_call firing never guaranteed the read succeeded, and there is no
       // tool_result event to confirm it — so a click can 404. Fail gracefully.
@@ -671,7 +680,8 @@ export default function ChatSession() {
               <AssistantMessage
                 key={m.id}
                 turn={m.turn}
-                onOpen={openSource}
+                kb={m.kb}
+                onOpen={(source) => void openSource(source, m.kb)}
                 onOpenArtifact={setPanelArtifact}
               />
             ),
@@ -724,7 +734,7 @@ export default function ChatSession() {
                 {t("common:pageLoadError", { error: panel.error })}
               </div>
             )}
-            {panel.content !== null && <MarkdownView source={panel.content} />}
+            {panel.content !== null && <MarkdownView kb={panel.kb} source={panel.content} />}
           </div>
         </SheetContent>
       </Sheet>

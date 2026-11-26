@@ -31,6 +31,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "model": "gpt-5.4",
     "language": "en",
     "pageindex_threshold": 20,
+    "grounding_audit": False,
     # A GLOBAL_SCALAR_KEY like the three above, so the merged `effective` dict
     # always carries it (the layering/`sources` logic is type-agnostic). A
     # global/KB list overrides it wholesale; resolve_entity_types cleans the
@@ -91,6 +92,16 @@ def _load_global_config_unlocked() -> dict[str, Any]:
         if isinstance(data, dict):
             return data
     return {}
+
+
+def resolve_grounding_audit(config: dict) -> bool:
+    """Enable the blocking factual audit only with an explicit YAML/JSON boolean."""
+    value = config.get("grounding_audit")
+    if value is None:
+        value = DEFAULT_CONFIG["grounding_audit"]
+    if not isinstance(value, bool):
+        raise ValueError("grounding_audit must be a boolean")
+    return value
 
 
 def resolve_entity_types(config: dict, *, warn: bool = True) -> list[str]:
@@ -408,6 +419,7 @@ class LlmCredentialBundle:
     timeout: float | None = None
     parallel_tool_calls: bool | None = None
     parallel_tool_calls_explicit: bool = False
+    reasoning_effort: str | None = None
 
 
 def resolve_credential_bundle(kb_dir: Path) -> LlmCredentialBundle:
@@ -500,8 +512,16 @@ def load_global_config() -> dict[str, Any]:
 # layer below) is type-agnostic, so a KB list overrides the global list wholesale.
 GLOBAL_SCALAR_KEYS: tuple[str, ...] = (
     "model",
+    "indexing_model",
+    "compilation_model",
+    "query_model",
+    "reasoning_effort",
+    "indexing_reasoning_effort",
+    "compilation_reasoning_effort",
+    "query_reasoning_effort",
     "language",
     "pageindex_threshold",
+    "grounding_audit",
     "entity_types",
 )
 
@@ -549,7 +569,9 @@ def resolve_effective_config(kb_dir: Path) -> tuple[dict[str, Any], dict[str, st
             # means "inherit": don't clobber the global/default layer, and keep
             # `sources` reporting the layer that actually supplied the value. The
             # gate is on GLOBAL_SCALAR_KEYS so non-scalar nulls (parallel_tool_calls) stay.
-            if key in GLOBAL_SCALAR_KEYS and (value is None or value == []):
+            if key in GLOBAL_SCALAR_KEYS and (
+                value is None or (key == "entity_types" and value == [])
+            ):
                 continue
             effective[key] = value
             if key in GLOBAL_SCALAR_KEYS:

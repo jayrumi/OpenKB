@@ -43,12 +43,17 @@ from openkb.cli import (
     save_exploration,
 )
 from openkb.config import (
-    DEFAULT_CONFIG,
     register_kb_alias,
     resolve_effective_config,
     resolve_kb_alias,
 )
 from openkb.log import append_log
+from openkb.reasoning import with_reasoning_effort
+from openkb.stage_config import (
+    require_chat_model_allowed,
+    resolve_stage_model,
+    resolve_stage_reasoning,
+)
 from openkb.watch_service import WatchRegistry
 
 security = HTTPBearer(auto_error=False)
@@ -393,15 +398,20 @@ async def _add_saved_file(
 def _load_or_create_session(kb_dir: Path, session_id: str | None) -> ChatSession:
     if session_id:
         try:
-            return load_session(kb_dir, session_id)
+            session = load_session(kb_dir, session_id)
         except FileNotFoundError as exc:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Chat session not found: {session_id}",
             ) from exc
+        try:
+            require_chat_model_allowed(session.model)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        return session
 
     config = resolve_effective_config(kb_dir)[0]
-    model = config.get("model", DEFAULT_CONFIG["model"])
+    model = resolve_stage_model(config, "query")
     language = config.get("language", "en")
     return ChatSession.new(kb_dir, model, language)
 
@@ -423,6 +433,10 @@ async def _stream_query(
     run_config = build_run_config_from_bundle(model, bundle)
     try:
         config = resolve_effective_config(kb_dir)[0]
+        from openkb.reasoning import with_reasoning_effort
+        from openkb.stage_config import resolve_stage_reasoning
+
+        bundle = with_reasoning_effort(bundle, resolve_stage_reasoning(config, "query"))
         language = config.get("language", "en")
         agent = build_query_agent(str(kb_dir / "wiki"), model, language=language, bundle=bundle)
         final_answer = ""
@@ -614,14 +628,14 @@ async def _iter_deck(
         yield {"event": "error", "code": 400, "message": err}
         return
     config = resolve_effective_config(kb_dir)[0]
-    model = config.get("model", DEFAULT_CONFIG["model"])
+    model = resolve_stage_model(config, "compilation")
     gen = Generator(
         target_type="deck",
         name=request.name,
         intent=request.intent,
         kb_dir=kb_dir,
         model=model,
-        bundle=bundle,
+        bundle=with_reasoning_effort(bundle, resolve_stage_reasoning(config, "compilation")),
     )
     try:
         await gen.run()
@@ -676,14 +690,14 @@ async def _iter_skill(
         yield {"event": "error", "code": 400, "message": err}
         return
     config = resolve_effective_config(kb_dir)[0]
-    model = config.get("model", DEFAULT_CONFIG["model"])
+    model = resolve_stage_model(config, "compilation")
     gen = Generator(
         target_type="skill",
         name=request.name,
         intent=request.intent,
         kb_dir=kb_dir,
         model=model,
-        bundle=bundle,
+        bundle=with_reasoning_effort(bundle, resolve_stage_reasoning(config, "compilation")),
     )
     try:
         await gen.run()

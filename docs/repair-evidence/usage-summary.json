@@ -1,0 +1,10 @@
+{
+  "application_calls": 34,
+  "http_attempts": 34,
+  "reported_tokens": 38836,
+  "missing_usage_calls": 24,
+  "models": [
+    "chatgpt/gpt-6.2-sol"
+  ],
+  "scope": "all repair-phase attempts including initial failed mixed-lifecycle query and browser check; excludes agent development"
+}

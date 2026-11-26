@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, StrictBool
 
 
 class QueryRequest(BaseModel):
@@ -417,8 +417,22 @@ class _KbConfigWritable(BaseModel):
     """
 
     model: str | None = None
+    indexing_model: str | None = Field(default=None, min_length=1, pattern=r"\S")
+    compilation_model: str | None = Field(default=None, min_length=1, pattern=r"\S")
+    query_model: str | None = Field(default=None, min_length=1, pattern=r"\S")
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None = None
+    indexing_reasoning_effort: (
+        Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None
+    ) = None
+    compilation_reasoning_effort: (
+        Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None
+    ) = None
+    query_reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None = (
+        None
+    )
     language: str | None = None
     pageindex_threshold: int | None = None
+    grounding_audit: StrictBool | None = None
     # Entity-type vocabulary for extraction. A list REPLACES the layer below; an
     # explicit null reverts to inherited. Values are cleaned/deduped and "other"
     # is always ensured at read time (config.resolve_entity_types).
@@ -434,13 +448,29 @@ class GlobalConfigValues(BaseModel):
     """Raw global-layer values (null where global.yaml is silent)."""
 
     model: str | None = None
+    indexing_model: str | None = None
+    compilation_model: str | None = None
+    query_model: str | None = None
+    reasoning_effort: str | None = None
+    indexing_reasoning_effort: str | None = None
+    compilation_reasoning_effort: str | None = None
+    query_reasoning_effort: str | None = None
     language: str | None = None
     pageindex_threshold: int | None = None
+    grounding_audit: StrictBool | None = None
     entity_types: list[str] | None = None
 
 
 class GlobalConfigResponse(BaseModel):
+    grounding_audit: StrictBool = False
     model: str
+    indexing_model: str | None = None
+    compilation_model: str | None = None
+    query_model: str | None = None
+    reasoning_effort: str | None = None
+    indexing_reasoning_effort: str | None = None
+    compilation_reasoning_effort: str | None = None
+    query_reasoning_effort: str | None = None
     language: str
     pageindex_threshold: int
     # Effective global entity-type vocabulary (cleaned; always includes "other").
@@ -475,7 +505,15 @@ class GlobalConfigPatchRequest(BaseModel):
 
 
 class KbConfigResponse(BaseModel):
+    grounding_audit: StrictBool = False
     model: str
+    indexing_model: str | None = None
+    compilation_model: str | None = None
+    query_model: str | None = None
+    reasoning_effort: str | None = None
+    indexing_reasoning_effort: str | None = None
+    compilation_reasoning_effort: str | None = None
+    query_reasoning_effort: str | None = None
     language: str
     pageindex_threshold: int
     # Effective entity-type vocabulary (cleaned; always includes "other").

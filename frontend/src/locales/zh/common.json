@@ -1,4 +1,9 @@
 {
+  "pdf": {
+    "open": "打开原始 PDF · 第 {{page}} 页",
+    "physicalPage": "PDF 物理页 {{page}}",
+    "unavailable": "原始 PDF 已不可用。"
+  },
   "loading": "加载中…",
   "pageLoadError": "页面加载失败：{{error}}",
   "noChanges": "没有需要保存的更改",

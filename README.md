@@ -255,7 +255,23 @@ OpenKB settings are initialized by `openkb init` and stored in `.openkb/config.y
 model: gpt-5.4                   # LLM model (any LiteLLM-supported provider)
 language: en                     # Wiki output language
 pageindex_threshold: 20          # PDF pages threshold for PageIndex
+grounding_audit: false           # Optional blocking LLM source-attribution audit
 ```
+
+Import and recompile do **not** run the LLM grounding audit by default, including
+its size/preflight checks. Generation still receives original-source context and
+citation instructions; structural checks, canonical writes, source preservation,
+and mutation rollback remain in place. Published output is generated content,
+**not fact-validated**: skipping the audit does not add audit evidence or a
+verified/supported status.
+
+Set `grounding_audit: true` (an unquoted YAML boolean) to opt into the existing
+strict, selective source-attribution audit. Audit refusal (`unclear`,
+`unsupported`, invalid evidence, or an audit bound violation) still blocks
+publication and preserves rollback behavior. This key can also be set in the
+global `~/.config/openkb/global.yaml` defaults or through the global/KB config
+API. A KB boolean overrides the global setting; `null` inherits it. Strings such
+as `"false"` and numeric values are rejected, not interpreted as booleans.
 
 The full settings reference — `entity_types`, OAuth providers (`chatgpt/*`, `github_copilot/*`), and LiteLLM tuning (timeouts for slow local runtimes like Ollama / LM Studio, `drop_params`, GitHub Copilot headers, install notes) — is in **[`examples/configuration/`](examples/configuration/)**.
 

@@ -96,6 +96,7 @@ from openkb.api_models import (
 )
 from openkb.api_output import output_router
 from openkb.api_pages_router import pages_router
+from openkb.api_pdf_router import pdf_router
 from openkb.cli import (
     get_kb_list,
     get_kb_status,
@@ -104,13 +105,13 @@ from openkb.cli import (
     run_remove_for_api,
 )
 from openkb.config import (
-    DEFAULT_CONFIG,
     resolve_credential_bundle,
     resolve_effective_config,
     resolve_init_kb_dir,
     validate_kb_name,
 )
 from openkb.log import append_log
+from openkb.stage_config import resolve_stage_model
 from openkb.watch_service import WatchRegistry
 
 logger = logging.getLogger(__name__)
@@ -159,6 +160,9 @@ def create_app() -> FastAPI:
             yield
         finally:
             registry.stop_all()
+            from openkb.llm_lifecycle import close_current_loop_clients
+
+            await close_current_loop_clients()
 
     app = FastAPI(title="OpenKB API", lifespan=lifespan)
 
@@ -169,6 +173,7 @@ def create_app() -> FastAPI:
     app.include_router(kbs_router)
     app.include_router(pages_router)
     app.include_router(documents_router)
+    app.include_router(pdf_router)
 
     @app.get("/api/v1/kbs", response_model=KbListResponse)
     async def list_kbs_endpoint(
@@ -277,7 +282,7 @@ def create_app() -> FastAPI:
         kb_dir = _resolve_kb(request.kb)
         bundle = resolve_credential_bundle(kb_dir)
         config = resolve_effective_config(kb_dir)[0]
-        model = config.get("model", DEFAULT_CONFIG["model"])
+        model = resolve_stage_model(config, "query")
         run_config = build_run_config_from_bundle(model, bundle)
 
         if request.stream:
@@ -316,8 +321,8 @@ def create_app() -> FastAPI:
         _: None = Depends(require_bearer_token),
     ) -> Any:
         kb_dir = _resolve_kb(request.kb)
-        bundle = resolve_credential_bundle(kb_dir)
         session = _load_or_create_session(kb_dir, request.session_id)
+        bundle = resolve_credential_bundle(kb_dir)
         run_config = build_run_config_from_bundle(session.model, bundle)
 
         if request.stream:

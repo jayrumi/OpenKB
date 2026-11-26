@@ -1,0 +1,27 @@
+{
+  "mode": "actual Flash layout + actual OpenKB page-content tool; NO LLM answering",
+  "pages": 4,
+  "top_level_nodes": 4,
+  "checks": [
+    {
+      "heading": "1. Grain and Facts",
+      "page": 2,
+      "expected_fact_present": true,
+      "citation_marker_present": true
+    },
+    {
+      "heading": "2. Slowly Changing Dimensions",
+      "page": 3,
+      "expected_fact_present": true,
+      "citation_marker_present": true
+    },
+    {
+      "heading": "3. Incremental Recovery",
+      "page": 4,
+      "expected_fact_present": true,
+      "citation_marker_present": true
+    }
+  ],
+  "all_passed": true,
+  "old_new_llm_quality_comparison": "not executed: would exceed bounded inference budget; no speedup or answer-quality claim"
+}

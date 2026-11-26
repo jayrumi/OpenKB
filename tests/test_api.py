@@ -2529,8 +2529,16 @@ def test_global_config_get_defaults_when_absent(monkeypatch, tmp_path):
     body = client.get("/api/v1/config", headers=_auth()).json()
     assert body == {
         "model": "gpt-5.4",
+        "indexing_model": None,
+        "compilation_model": None,
+        "query_model": None,
+        "reasoning_effort": None,
+        "indexing_reasoning_effort": None,
+        "compilation_reasoning_effort": None,
+        "query_reasoning_effort": None,
         "language": "en",
         "pageindex_threshold": 20,
+        "grounding_audit": False,
         # Default entity-type vocabulary when global.yaml sets none.
         "entity_types": ["person", "organization", "place", "product", "work", "event", "other"],
         # kb_root reports the EFFECTIVE root; with no env/global override it is

@@ -31,6 +31,7 @@ from openkb.agent.query import (
 )
 from openkb.config import LlmCredentialBundle
 from openkb.log import append_log
+from openkb.reasoning import stage_reasoning_kwargs
 
 _STYLE_DICT: dict[str, str] = {
     "prompt": "bold #5fa0e0",
@@ -570,10 +571,11 @@ async def _handle_slash_skill(arg: str, kb_dir: Path, style: Style) -> None:
         return
 
     # Load model from KB config
-    from openkb.config import DEFAULT_CONFIG, resolve_effective_config
+    from openkb.config import resolve_effective_config
+    from openkb.stage_config import resolve_stage_model
 
     config = resolve_effective_config(kb_dir)[0]
-    model = config.get("model", DEFAULT_CONFIG["model"])
+    model = resolve_stage_model(config, "compilation")
 
     from openkb.skill.generator import Generator
 
@@ -584,6 +586,7 @@ async def _handle_slash_skill(arg: str, kb_dir: Path, style: Style) -> None:
         intent=intent,
         kb_dir=kb_dir,
         model=model,
+        **stage_reasoning_kwargs(config, "compilation"),
     )
     try:
         await gen.run()
@@ -701,10 +704,11 @@ async def _handle_slash_deck(arg: str, kb_dir: Path, style: Style) -> None:
         return
 
     # Load model from KB config
-    from openkb.config import DEFAULT_CONFIG, resolve_effective_config
+    from openkb.config import resolve_effective_config
+    from openkb.stage_config import resolve_stage_model
 
     config = resolve_effective_config(kb_dir)[0]
-    model = config.get("model", DEFAULT_CONFIG["model"])
+    model = resolve_stage_model(config, "compilation")
 
     from openkb.deck.creator import DEFAULT_DECK_SKILL
     from openkb.skill.generator import Generator
@@ -722,6 +726,7 @@ async def _handle_slash_deck(arg: str, kb_dir: Path, style: Style) -> None:
         model=model,
         critique=critique,
         skill_name=skill_name,
+        **stage_reasoning_kwargs(config, "compilation"),
     )
     try:
         await gen.run()
@@ -867,10 +872,11 @@ async def _handle_slash_critique(arg: str, kb_dir: Path, style: Style) -> None:
         SkillNotFoundError,
         run_skill,
     )
-    from openkb.config import DEFAULT_CONFIG, resolve_effective_config
+    from openkb.config import resolve_effective_config
+    from openkb.stage_config import resolve_stage_model
 
     config = resolve_effective_config(kb_dir)[0]
-    model = config.get("model", DEFAULT_CONFIG["model"])
+    model = resolve_stage_model(config, "compilation")
 
     # Path passed to the skill is relative to kb_dir (the agent's cwd
     # conceptually). The skill's read_file/write_file tools operate
@@ -893,6 +899,7 @@ async def _handle_slash_critique(arg: str, kb_dir: Path, style: Style) -> None:
             kb_dir=kb_dir,
             model=model,
             max_turns=40,
+            **stage_reasoning_kwargs(config, "compilation"),
         )
     except SkillNotFoundError as exc:
         _fmt(style, ("class:error", f"[ERROR] {exc}\n"))

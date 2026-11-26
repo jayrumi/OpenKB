@@ -1,4 +1,9 @@
 {
+  "pdf": {
+    "open": "Open original PDF · page {{page}}",
+    "physicalPage": "Physical PDF page {{page}}",
+    "unavailable": "Original PDF is no longer available."
+  },
   "loading": "Loading…",
   "pageLoadError": "Failed to load page: {{error}}",
   "noChanges": "No changes to save",

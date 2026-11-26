@@ -1,5 +1,6 @@
 import { apiFetch, apiStream, type SseEvent } from "./client"
 import i18n from "@/lib/i18n"
+import { physicalPages } from "./pdfSources"
 
 /**
  * A provenance "source" derived from a `tool_call` the agent made during a
@@ -13,11 +14,9 @@ import i18n from "@/lib/i18n"
  *
  *  - kind `"page"`: a `read_file(path)` call. Clickable — the path resolves to
  *    a real wiki page via `/api/v1/page {kb, path}`.
- *  - kind `"doc"`: a `get_page_content(doc_name, pages)` call against a long
- *    (PageIndex) document's internal JSON metadata. No endpoint serves that, so
- *    it renders as a non-clickable label — still shown, so the answer's
- *    provenance is honest about having drawn on a long document, not only wiki
- *    pages.
+ *  - kind `"doc"`: a `get_page_content` / `read_document` PageIndex read.
+ *    Explicit physical pages become links only after the backend verifies a
+ *    unique registered original PDF. Missing originals/pages stay plain text.
  */
 export interface Source {
   kind: "page" | "doc"
@@ -27,6 +26,8 @@ export interface Source {
   path?: string
   /** Long-document name — present only for kind `"doc"`. */
   docName?: string
+  /** Explicit physical pages requested by a PageIndex read; never guessed. */
+  pages?: number[]
 }
 
 /**
@@ -110,14 +111,14 @@ function normalizePath(path: string): string {
 function sourceKey(s: Source): string {
   return s.kind === "page"
     ? `page:${normalizePath(s.path ?? "")}`
-    : `doc:${(s.docName ?? "").trim()}`
+    : `doc:${(s.docName ?? "").trim()}:${(s.pages ?? []).join(",")}`
 }
 
 /**
  * The WHITELIST. Turn a `tool_call` event's `data` into a {@link Source}, or
  * `null` to drop it.
  *
- * Only `read_file` and `get_page_content` are recognised; any other tool name
+ * Only `read_file`, `get_page_content`, and `read_document` are recognised; any other tool name
  * (`get_image`, or a tool added to the agent later) yields `null` and is
  * ignored. This is deliberately a whitelist, not a blacklist: an unknown future
  * tool never becomes a broken or misleading chip.
@@ -128,7 +129,7 @@ function sourceKey(s: Source): string {
 export function toolCallSource(data: unknown): Source | null {
   const d = (data ?? {}) as { name?: unknown; arguments?: unknown }
   const name = d.name
-  if (name !== "read_file" && name !== "get_page_content") return null
+  if (name !== "read_file" && name !== "get_page_content" && name !== "read_document") return null
 
   let args: Record<string, unknown> = {}
   const raw = d.arguments
@@ -142,15 +143,16 @@ export function toolCallSource(data: unknown): Source | null {
     args = raw as Record<string, unknown>
   }
 
+  if (!args || typeof args !== "object" || Array.isArray(args)) return null
   if (name === "read_file") {
     const path = typeof args.path === "string" ? args.path.trim() : ""
     if (!path) return null
     return { kind: "page", label: path, path }
   }
-  // get_page_content
+  // PageIndex document reads share the doc_name/pages contract.
   const docName = typeof args.doc_name === "string" ? args.doc_name.trim() : ""
   if (!docName) return null
-  return { kind: "doc", label: docName, docName }
+  return { kind: "doc", label: docName, docName, pages: physicalPages(args.pages) }
 }
 
 /** Append a source to a per-turn list, deduped by normalized key. First-seen

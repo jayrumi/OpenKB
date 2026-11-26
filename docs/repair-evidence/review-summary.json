@@ -1,0 +1,20 @@
+{
+  "main_fix_review": {
+    "passed": true,
+    "blocking_findings": [],
+    "focused_test_passes": [
+      165,
+      61
+    ]
+  },
+  "lifecycle_review": {
+    "passed": true,
+    "blocking_findings": [],
+    "focused_test_passes": [
+      13,
+      35
+    ],
+    "ownership_probes": "original errors/cancellation preserved; foreign-loop entries untouched; exact cache-key deletion verified"
+  },
+  "followup_tests": "Added cancellation rollback, raw/index preservation and rejected loop startup regressions; final full suite passed."
+}
